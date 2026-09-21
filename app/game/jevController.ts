@@ -10,6 +10,7 @@ import {
   type DecideState,
   type JevAction,
 } from "../lib/jev-contract";
+import { logJevAct, logJevAsk, logJevReply } from "./jevLog";
 
 export type JevControllerOptions = {
   getState: () => DecideState | null;
@@ -54,6 +55,11 @@ export class JevController {
     this.duckBelief = 0;
     this.lastAskKey = "";
     this.lastDecision = null;
+    console.log(
+      "%c[Jev]%c decision log on — watch [ask] / [reply] / [act]",
+      "color:#0a7;font-weight:700",
+      "color:inherit",
+    );
     this.timer = setInterval(() => void this.askJev(), this.options.intervalMs);
     void this.askJev();
     const tick = () => {
@@ -79,7 +85,9 @@ export class JevController {
     if (!state) return;
     const next = nextActionable(state.upcoming);
     if (!next) {
-      if (this.lastAction !== "run") this.emitAction("run", 0, 0, "heuristic");
+      if (this.lastAction !== "run") {
+        this.emitAction("run", 0, 0, "heuristic", state);
+      }
       return;
     }
 
@@ -151,7 +159,7 @@ export class JevController {
       source = hasBelief ? source : "heuristic";
     }
 
-    this.emitAction(action, jump, duck, source);
+    this.emitAction(action, jump, duck, source, state);
   }
 
   private emitAction(
@@ -159,6 +167,7 @@ export class JevController {
     jump_now: number,
     duck_now: number,
     source: DecideResponse["source"],
+    state: DecideState | null = null,
   ) {
     const decision: DecideResponse = {
       action,
@@ -169,9 +178,13 @@ export class JevController {
       source,
     };
     const changed = action !== this.lastAction;
+    const from = this.lastAction;
     this.lastAction = action;
     this.lastDecision = decision;
-    if (changed) this.options.onDecision(decision);
+    if (changed) {
+      logJevAct(from, action, decision, state ?? this.options.getState());
+      this.options.onDecision(decision);
+    }
   }
 
   private async askJev() {
@@ -193,6 +206,8 @@ export class JevController {
     this.inflight?.abort();
     const controller = new AbortController();
     this.inflight = controller;
+
+    logJevAsk(state);
 
     try {
       const response = await fetch("/api/jev-decide", {
@@ -227,9 +242,16 @@ export class JevController {
         duck_now: this.duckBelief,
         action: pickAction(this.jumpBelief, this.duckBelief),
       };
+      logJevReply(this.lastDecision, state);
       this.options.onDecision(this.lastDecision);
-    } catch {
-      /* local planner covers gaps */
+    } catch (error) {
+      if ((error as Error)?.name === "AbortError") return;
+      console.log(
+        "%c[Jev reply]%c (fallback — local planner) %s",
+        "color:#666;font-weight:600",
+        "color:inherit",
+        error instanceof Error ? error.message : "request failed",
+      );
     } finally {
       if (this.inflight === controller) this.inflight = null;
     }
