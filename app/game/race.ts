@@ -113,17 +113,16 @@ export class RaceGame {
   }
 
   private onKeyDown = (event: KeyboardEvent) => {
-    if (["Space", "ArrowUp", "ArrowDown"].includes(event.code)) {
+    if (["Space", "ArrowUp", "ArrowDown", "Enter"].includes(event.code)) {
       event.preventDefault();
     }
     if (this.keys.has(event.code)) return;
     this.keys.add(event.code);
 
-    if (this.phase === "idle" && (event.code === "Space" || event.code === "ArrowUp")) {
-      this.start();
-      return;
-    }
-    if (this.phase === "ended" && (event.code === "Space" || event.code === "ArrowUp")) {
+    if (
+      (this.phase === "idle" || this.phase === "ended") &&
+      (event.code === "Enter" || event.code === "Space")
+    ) {
       this.start();
       return;
     }

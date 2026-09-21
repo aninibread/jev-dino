@@ -174,8 +174,10 @@ export class ObstacleManager {
       elapsedMs < 10_000 && Math.random() < 0.7
         ? OBSTACLE_TYPES.find((t) => t.type === "CACTUS_SMALL")!
         : type;
+    // Extra runway for the very first obstacle of a race.
+    const xOffset = this.obstacles.length === 0 ? 280 : 0;
     this.obstacles.push(
-      new Obstacle(forced, speed, this.gapCoefficient, elapsedMs),
+      new Obstacle(forced, speed, this.gapCoefficient, elapsedMs, xOffset),
     );
   }
 
