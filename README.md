@@ -1,79 +1,26 @@
-# Welcome to React Router!
+# Dino — Race Jev
 
-A modern, production-ready template for building full-stack React applications using React Router.
+Race the Chrome offline dinosaur against [Jev](https://developers.cloudflare.com/ai/models/typesafe/jev/) on Cloudflare Workers AI. Shared obstacles, aggressive 60-second speed ramp.
 
-## Features
-
-- 🚀 Server-side rendering
-- ⚡️ Hot Module Replacement (HMR)
-- 📦 Asset bundling and optimization
-- 🔄 Data loading and mutations
-- 🔒 TypeScript by default
-- 🎉 TailwindCSS for styling
-- 📖 [React Router docs](https://reactrouter.com/)
-
-## Getting Started
-
-### Installation
-
-Install the dependencies:
+## Run locally
 
 ```bash
 npm install
-```
-
-### Development
-
-Start the development server with HMR:
-
-```bash
 npm run dev
 ```
 
-Your application will be available at `http://localhost:5173`.
+Requires a Cloudflare account with Workers AI access for live Jev decisions. If AI is unavailable, the Worker falls back to a local heuristic so the race still runs.
 
-## Previewing the Production Build
+Local `npm run dev` sets `remoteBindings: false` in `vite.config.ts` so the app starts without a Cloudflare API token; Jev calls then use the heuristic backup. Deployed Workers (or `remoteBindings: true` with auth) use live `typesafe/jev`.
 
-Preview the production build locally:
-
-```bash
-npm run preview
-```
-
-## Building for Production
-
-Create a production build:
+## Deploy
 
 ```bash
-npm run build
-```
-
-## Deployment
-
-Deployment is done using the Wrangler CLI.
-
-To build and deploy directly to production:
-
-```sh
 npm run deploy
 ```
 
-To deploy a preview URL:
+## Credits
 
-```sh
-npx wrangler versions upload
-```
+Dinosaur sprites adapted from Chromium’s offline T-Rex runner via [wayou/t-rex-runner](https://github.com/wayou/t-rex-runner) (BSD-3-Clause).
 
-You can then promote a version to production after verification or roll it out progressively.
-
-```sh
-npx wrangler versions deploy
-```
-
-## Styling
-
-This template comes with [Tailwind CSS](https://tailwindcss.com/) already configured for a simple default starting experience. You can use whatever CSS framework you prefer.
-
----
-
-Built with ❤️ using React Router.
+See [docs/PLAN.md](./docs/PLAN.md) for the full product plan.
