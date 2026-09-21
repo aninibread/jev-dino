@@ -5,6 +5,7 @@ import {
   GAME_DURATION_MS,
   LANE_GAP,
   LANE_HEIGHT,
+  SPECTATE_MS,
   TREX,
 } from "./constants";
 import { Dino } from "./dino";
@@ -14,7 +15,7 @@ import { ObstacleManager } from "./obstacles";
 import { speedMultiplier } from "./speedCurve";
 import type { DecideResponse, JevAction } from "../lib/jev-contract";
 
-export type RacePhase = "idle" | "playing" | "ended";
+export type RacePhase = "idle" | "playing" | "spectating" | "ended";
 export type Winner = "you" | "jev" | "tie" | null;
 
 export type RaceSnapshot = {
@@ -27,6 +28,8 @@ export type RaceSnapshot = {
   youDistance: number;
   jevDistance: number;
   lastJev: DecideResponse | null;
+  /** Seconds left in the watch-Jev window (spectating only). */
+  spectateLeftMs: number;
 };
 
 export type RaceCallbacks = {
@@ -54,6 +57,7 @@ export class RaceGame {
   jevDistance = 0;
   winner: Winner = null;
   lastJev: DecideResponse | null = null;
+  private spectateElapsedMs = 0;
   private raf = 0;
   private lastTime = 0;
   private keys = new Set<string>();
@@ -89,6 +93,10 @@ export class RaceGame {
 
   get height() {
     return LANE_HEIGHT * 2 + LANE_GAP;
+  }
+
+  private get live() {
+    return this.phase === "playing" || this.phase === "spectating";
   }
 
   resize() {
@@ -144,6 +152,11 @@ export class RaceGame {
       this.start();
       return;
     }
+    // Spectating: Space/Enter skips to the result screen.
+    if (this.phase === "spectating" && (event.code === "Enter" || event.code === "Space")) {
+      this.finish(this.winner ?? "jev");
+      return;
+    }
     if (this.phase !== "playing") return;
 
     if (event.code === "Space" || event.code === "ArrowUp") {
@@ -190,11 +203,13 @@ export class RaceGame {
     this.phase = "playing";
     this.elapsedMs = 0;
     this.clearTimer = 0;
+    this.spectateElapsedMs = 0;
     this.speed = BASE_SPEED;
     this.winner = null;
     this.youDistance = 0;
     this.jevDistance = 0;
     this.lastJev = null;
+    this.duckHeld = false;
     this.you.startRunning();
     this.jev.startRunning();
     this.jevController.start();
@@ -220,7 +235,7 @@ export class RaceGame {
       this.lastTime = now;
       this.update(delta);
       this.draw();
-      if (this.phase === "playing") {
+      if (this.live) {
         this.raf = requestAnimationFrame(frame);
       }
     };
@@ -233,7 +248,7 @@ export class RaceGame {
   }
 
   private buildJevState() {
-    if (this.phase !== "playing" || this.jev.crashed) return null;
+    if (!this.live || this.jev.crashed) return null;
     const px_per_sec = Math.max(this.speed, 0.1) * 60;
     const upcoming = this.obstacles.upcomingFor(TREX.START_X).map((o) => {
       const clearance =
@@ -263,7 +278,7 @@ export class RaceGame {
   }
 
   private applyJevAction(action: JevAction) {
-    if (this.jev.crashed || this.phase !== "playing") return;
+    if (this.jev.crashed || !this.live) return;
     if (action === "jump") {
       this.jev.setDuck(false);
       this.jev.jump();
@@ -276,10 +291,11 @@ export class RaceGame {
   }
 
   private update(deltaTime: number) {
-    if (this.phase !== "playing") return;
+    if (!this.live) return;
 
     this.elapsedMs += deltaTime;
     this.clearTimer += deltaTime;
+    if (this.phase === "spectating") this.spectateElapsedMs += deltaTime;
     this.speed = BASE_SPEED * speedMultiplier(this.elapsedMs);
 
     if (this.clearTimer > CLEAR_TIME_MS) {
@@ -291,24 +307,36 @@ export class RaceGame {
     this.cloudsYou.update(deltaTime, this.speed);
     this.cloudsJev.update(deltaTime, this.speed);
 
-    if (!this.you.crashed) {
+    if (this.phase === "playing" && !this.you.crashed) {
       // Apply duck before physics so mid-air slam starts this frame.
       if (this.duckHeld) this.you.setDuck(true);
       this.you.update(deltaTime);
       this.youDistance += this.speed * deltaTime * 0.1;
+    } else if (this.you.crashed) {
+      // Keep crashed pose frozen; still tick anim timer lightly via update.
+      this.you.update(deltaTime);
     }
+
     if (!this.jev.crashed) {
       if (this.jevController.action === "duck") {
         this.jev.setDuck(true);
       }
       this.jev.update(deltaTime);
       this.jevDistance += this.speed * deltaTime * 0.1;
+    } else {
+      this.jev.update(deltaTime);
     }
 
     // Collisions against shared obstacle geometry
     for (const obstacle of this.obstacles.obstacles) {
       const boxes = obstacle.boxes();
-      if (!this.you.crashed && this.you.collides(boxes)) this.you.crash();
+      if (
+        this.phase === "playing" &&
+        !this.you.crashed &&
+        this.you.collides(boxes)
+      ) {
+        this.you.crash();
+      }
       if (!this.jev.crashed && this.jev.collides(boxes)) this.jev.crash();
     }
 
@@ -316,11 +344,27 @@ export class RaceGame {
     this.emit();
   }
 
+  private beginSpectate() {
+    this.phase = "spectating";
+    this.winner = "jev";
+    this.spectateElapsedMs = 0;
+    this.duckHeld = false;
+    this.emit();
+  }
+
   private resolveEnd() {
+    if (this.phase === "spectating") {
+      if (this.jev.crashed || this.spectateElapsedMs >= SPECTATE_MS) {
+        this.finish("jev");
+      }
+      return;
+    }
+
     if (this.phase !== "playing") return;
 
     if (this.you.crashed && !this.jev.crashed) {
-      this.finish("jev");
+      // You lost — keep the camera on Jev for a showcase stretch.
+      this.beginSpectate();
       return;
     }
     if (this.jev.crashed && !this.you.crashed) {
@@ -328,7 +372,6 @@ export class RaceGame {
       return;
     }
     if (this.you.crashed && this.jev.crashed) {
-      // Same-frame double crash → tie
       this.finish("tie");
       return;
     }
@@ -358,6 +401,10 @@ export class RaceGame {
       youDistance: this.youDistance,
       jevDistance: this.jevDistance,
       lastJev: this.lastJev,
+      spectateLeftMs:
+        this.phase === "spectating"
+          ? Math.max(0, SPECTATE_MS - this.spectateElapsedMs)
+          : 0,
     });
   }
 

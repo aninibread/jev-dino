@@ -31,7 +31,12 @@ export function RaceCanvas({
       const game = new RaceGame(canvas, sprite, {
         onChange: (next) => {
           setSnapshot(next);
-          onWinnerChange?.(next.phase === "ended" ? next.winner : null);
+          // Show the result title while watching Jev after a loss too.
+          if (next.phase === "ended" || next.phase === "spectating") {
+            onWinnerChange?.(next.winner);
+          } else {
+            onWinnerChange?.(null);
+          }
         },
       });
       gameRef.current = game;
@@ -61,6 +66,7 @@ export function RaceCanvas({
   }, []);
 
   const phase = snapshot?.phase ?? "idle";
+  const spectateLeft = Math.ceil((snapshot?.spectateLeftMs ?? 0) / 1000);
 
   function onJumpPointer(event: React.PointerEvent) {
     event.preventDefault();
@@ -109,6 +115,20 @@ export function RaceCanvas({
               Race again
             </button>
           </div>
+        ) : phase === "spectating" ? (
+          <div className="touch-ended">
+            <p className="touch-result">Watching Jev</p>
+            <p className="touch-spectate-meta muted">
+              {spectateLeft}s left · tap Race again anytime
+            </p>
+            <button
+              type="button"
+              className="touch-btn touch-again"
+              onPointerDown={onRaceAgain}
+            >
+              Race again
+            </button>
+          </div>
         ) : (
           <>
             <button
@@ -133,13 +153,22 @@ export function RaceCanvas({
       </div>
 
       <div className="race-actions">
-        {phase !== "playing" && (
+        {phase === "idle" && (
           <button
             type="button"
             className="primary"
             onClick={() => gameRef.current?.start()}
           >
-            {phase === "ended" ? "Race again" : "Race Jev"}
+            Race Jev
+          </button>
+        )}
+        {(phase === "ended" || phase === "spectating") && (
+          <button
+            type="button"
+            className="primary"
+            onClick={() => gameRef.current?.start()}
+          >
+            Race again
           </button>
         )}
       </div>

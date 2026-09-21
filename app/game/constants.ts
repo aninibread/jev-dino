@@ -5,6 +5,8 @@ export const LANE_GAP = 18;
 export const BOTTOM_PAD = 10;
 
 export const GAME_DURATION_MS = 60_000;
+/** After the player crashes, keep Jev running this long so you can watch. */
+export const SPECTATE_MS = 30_000;
 
 /** Base Chromium-like speeds; our curve multiplies these aggressively. */
 export const BASE_SPEED = 6;
