@@ -1,4 +1,5 @@
 import {
+  clearanceFor,
   type DecideState,
   type ObstacleKind,
 } from "../app/lib/jev-contract";
@@ -74,6 +75,12 @@ function parseState(raw: Record<string, unknown>): DecideState {
     throw new ApiError(400, "Invalid dino state.");
   }
   if (upcoming.length > 3) throw new ApiError(400, "Too many obstacles.");
+
+  const px_per_sec =
+    typeof raw.px_per_sec === "number" && raw.px_per_sec > 0
+      ? raw.px_per_sec
+      : Math.max(raw.speed, 0.1) * 60;
+
   const parsedUpcoming: DecideState["upcoming"] = [];
   for (const item of upcoming) {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
@@ -89,17 +96,30 @@ function parseState(raw: Record<string, unknown>): DecideState {
     ) {
       throw new ApiError(400, "Invalid obstacle fields.");
     }
+    const type = o.type as ObstacleKind;
+    const time_to_impact =
+      typeof o.time_to_impact === "number"
+        ? o.time_to_impact
+        : o.dx / px_per_sec;
     parsedUpcoming.push({
-      type: o.type as ObstacleKind,
+      type,
       dx: o.dx,
       width: o.width,
       height: o.height,
       y: o.y,
+      time_to_impact,
+      clearance:
+        o.clearance === "jump" ||
+        o.clearance === "duck" ||
+        o.clearance === "either"
+          ? o.clearance
+          : clearanceFor(type, o.y),
     });
   }
   return {
     t: raw.t,
     speed: raw.speed,
+    px_per_sec,
     dino: {
       y: d.y,
       vy: d.vy,
@@ -128,7 +148,6 @@ export async function handleApi(
         const decision = await decideWithJev(env.AI, state);
         return json(decision);
       } catch (error) {
-        // Keep the race alive if AI is down or rate-limited.
         console.error("jev decide failed", error);
         const fallback = heuristicDecide(state);
         return json({ ...fallback, durationMs: 0 });

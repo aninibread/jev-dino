@@ -1,4 +1,12 @@
-import type { DecideResponse, DecideState, JevAction } from "../lib/jev-contract";
+import {
+  duckLeadSeconds,
+  heuristicDecide,
+  jumpLeadSeconds,
+  pickAction,
+  type DecideResponse,
+  type DecideState,
+  type JevAction,
+} from "../lib/jev-contract";
 
 export type JevControllerOptions = {
   getState: () => DecideState | null;
@@ -7,20 +15,25 @@ export type JevControllerOptions = {
 };
 
 /**
- * Periodic Jev decisions — never blocks the game loop.
- * Falls back client-side if the network fails (server also has a heuristic).
+ * Jev answers "should I jump / duck for this hazard?" (noul probabilities).
+ * The browser commits the actual jump/duck at the correct lead time so
+ * 400–1200ms model latency cannot make Jev late every race.
  */
 export class JevController {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private frameHook: number | null = null;
   private inflight: AbortController | null = null;
   private lastAction: JevAction = "run";
   private lastDecision: DecideResponse | null = null;
+  private jumpBelief = 0;
+  private duckBelief = 0;
+  private lastAskKey = "";
   private options: Required<Pick<JevControllerOptions, "intervalMs">> &
     JevControllerOptions;
   running = false;
 
   constructor(options: JevControllerOptions) {
-    this.options = { intervalMs: 180, ...options };
+    this.options = { intervalMs: 110, ...options };
   }
 
   get action() {
@@ -35,26 +48,102 @@ export class JevController {
     this.stop();
     this.running = true;
     this.lastAction = "run";
-    this.timer = setInterval(() => void this.tick(), this.options.intervalMs);
-    void this.tick();
+    this.jumpBelief = 0;
+    this.duckBelief = 0;
+    this.lastAskKey = "";
+    this.lastDecision = null;
+    this.timer = setInterval(() => void this.askJev(), this.options.intervalMs);
+    void this.askJev();
+    const tick = () => {
+      if (!this.running) return;
+      this.executeTiming();
+      this.frameHook = requestAnimationFrame(tick);
+    };
+    this.frameHook = requestAnimationFrame(tick);
   }
 
   stop() {
     this.running = false;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    if (this.frameHook) cancelAnimationFrame(this.frameHook);
+    this.frameHook = null;
     this.inflight?.abort();
     this.inflight = null;
   }
 
-  private async tick() {
+  private executeTiming() {
+    const state = this.options.getState();
+    if (!state) return;
+    const next = state.upcoming[0];
+    if (!next) {
+      if (this.lastAction !== "run") this.emitAction("run", 0, 0, "heuristic");
+      return;
+    }
+
+    const jumpLead = jumpLeadSeconds(next.width, state.speed);
+    const duckLead = duckLeadSeconds(state.speed);
+    const tti = next.time_to_impact;
+    const hasBelief = this.jumpBelief > 0.05 || this.duckBelief > 0.05;
+
+    let jump = this.jumpBelief;
+    let duck = this.duckBelief;
+    let source: DecideResponse["source"] = this.lastDecision?.source ?? "jev";
+
+    // Imminent hazard + no/weak Jev answer yet → don't die waiting on the network.
+    if (!hasBelief || (this.inflight !== null && tti <= jumpLead + 0.08)) {
+      const local = heuristicDecide(state);
+      jump = Math.max(jump, local.jump_now);
+      duck = Math.max(duck, local.duck_now);
+      if (!hasBelief) source = "heuristic";
+    }
+
+    let action: JevAction = "run";
+    if (next.clearance === "duck") {
+      if (duck >= 0.5 && tti <= duckLead + 0.15 && tti > -0.02) action = "duck";
+    } else if (state.dino.grounded) {
+      if (jump >= 0.5 && tti <= jumpLead && tti > 0.02) action = "jump";
+    }
+
+    this.emitAction(action, jump, duck, source);
+  }
+
+  private emitAction(
+    action: JevAction,
+    jump_now: number,
+    duck_now: number,
+    source: DecideResponse["source"],
+  ) {
+    const decision: DecideResponse = {
+      action,
+      jump_now,
+      duck_now,
+      confidence: Math.max(jump_now, duck_now),
+      durationMs: this.lastDecision?.durationMs ?? 0,
+      source,
+    };
+    const changed = action !== this.lastAction;
+    this.lastAction = action;
+    this.lastDecision = decision;
+    if (changed) this.options.onDecision(decision);
+  }
+
+  private async askJev() {
     if (!this.running) return;
     const state = this.options.getState();
     if (!state) return;
-    if (this.inflight) return; // skip if still waiting
 
+    const next = state.upcoming[0];
+    if (!next || next.time_to_impact > 1.35 || next.time_to_impact < 0) return;
+
+    const askKey = `${next.type}:${next.clearance}:${Math.round(next.dx / 30)}`;
+    if (this.inflight && askKey === this.lastAskKey) return;
+
+    this.lastAskKey = askKey;
+    this.inflight?.abort();
     const controller = new AbortController();
     this.inflight = controller;
+
     try {
       const response = await fetch("/api/jev-decide", {
         method: "POST",
@@ -62,17 +151,36 @@ export class JevController {
         body: JSON.stringify(state),
         signal: AbortSignal.any([
           controller.signal,
-          AbortSignal.timeout(9000),
+          AbortSignal.timeout(2800),
         ]),
       });
       if (!response.ok) throw new Error("decide failed");
       const body = (await response.json()) as DecideResponse;
       if (!this.running) return;
-      this.lastAction = body.action;
-      this.lastDecision = body;
-      this.options.onDecision(body);
+
+      this.jumpBelief =
+        typeof body.jump_now === "number"
+          ? body.jump_now
+          : body.action === "jump"
+            ? 0.9
+            : 0.05;
+      this.duckBelief =
+        typeof body.duck_now === "number"
+          ? body.duck_now
+          : body.action === "duck"
+            ? 0.9
+            : 0.05;
+
+      this.lastDecision = {
+        ...body,
+        jump_now: this.jumpBelief,
+        duck_now: this.duckBelief,
+        action: pickAction(this.jumpBelief, this.duckBelief),
+      };
+      // Surface that a live Jev answer arrived (HUD source badge).
+      this.options.onDecision(this.lastDecision);
     } catch {
-      // Keep last action; server/heuristic will recover on next tick.
+      /* timing loop covers gaps */
     } finally {
       if (this.inflight === controller) this.inflight = null;
     }

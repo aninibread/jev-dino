@@ -87,6 +87,9 @@ export function RaceCanvas() {
         {lastJev && (
           <span className="jev-action">
             Jev: {lastJev.action}
+            {typeof lastJev.jump_now === "number"
+              ? ` · j${Math.round(lastJev.jump_now * 100)}`
+              : ""}
             {lastJev.source === "heuristic" ? " · backup" : ""}
           </span>
         )}

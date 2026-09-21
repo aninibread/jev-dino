@@ -230,16 +230,31 @@ export class RaceGame {
 
   private buildJevState() {
     if (this.phase !== "playing" || this.jev.crashed) return null;
+    const px_per_sec = Math.max(this.speed, 0.1) * 60;
+    const upcoming = this.obstacles.upcomingFor(TREX.START_X).map((o) => {
+      const clearance =
+        o.type === "bird" && o.y < 85
+          ? ("duck" as const)
+          : o.type === "bird"
+            ? ("either" as const)
+            : ("jump" as const);
+      return {
+        ...o,
+        time_to_impact: o.dx / px_per_sec,
+        clearance,
+      };
+    });
     return {
       t: this.elapsedMs / 1000,
       speed: this.speed,
+      px_per_sec,
       dino: {
         y: this.jev.yPos,
         vy: this.jev.jumpVelocity,
         ducking: this.jev.ducking,
         grounded: this.jev.grounded,
       },
-      upcoming: this.obstacles.upcomingFor(TREX.START_X),
+      upcoming,
     };
   }
 
