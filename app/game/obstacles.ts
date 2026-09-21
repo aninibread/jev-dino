@@ -6,7 +6,7 @@ import {
   type Box,
   type ObstacleTypeConfig,
 } from "./constants";
-import { gapShrink } from "./speedCurve";
+import { gapShrink, maxObstacleSize } from "./speedCurve";
 
 function rand(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -33,7 +33,7 @@ export class Obstacle {
     xOffset = 0,
   ) {
     this.typeConfig = typeConfig;
-    this.size = rand(1, 3);
+    this.size = rand(1, maxObstacleSize(elapsedMs, speed));
     if (this.size > 1 && typeConfig.multipleSpeed > speed) this.size = 1;
     this.width = typeConfig.width * this.size;
     this.xPos = DEFAULT_WIDTH + xOffset;

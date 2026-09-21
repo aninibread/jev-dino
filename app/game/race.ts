@@ -292,7 +292,8 @@ export class RaceGame {
       return;
     }
     if (this.you.crashed && this.jev.crashed) {
-      this.finish(this.youDistance >= this.jevDistance ? "you" : "jev");
+      // Same-frame double crash → tie
+      this.finish("tie");
       return;
     }
     if (this.elapsedMs >= GAME_DURATION_MS) {

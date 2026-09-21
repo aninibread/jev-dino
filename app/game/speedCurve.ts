@@ -9,8 +9,18 @@ export function speedMultiplier(elapsedMs: number): number {
   return 5 + ((t - 45) / 15) * 2.5; // → 7.5 at 60s
 }
 
+/** Multiply min gaps: smaller = denser obstacles. Keep early race roomy. */
 export function gapShrink(elapsedMs: number): number {
   const t = Math.min(elapsedMs / 1000, 60);
-  // Multiply min gaps: smaller = denser obstacles
-  return Math.max(0.35, 1 - t / 90);
+  if (t < 8) return 1.15;
+  if (t < 20) return 1 - ((t - 8) / 12) * 0.25; // → 0.9
+  return Math.max(0.4, 0.9 - (t - 20) / 80);
+}
+
+/** Cap cactus cluster size early so the opening is learnable. */
+export function maxObstacleSize(elapsedMs: number, speed: number): number {
+  const t = elapsedMs / 1000;
+  if (t < 6) return 1;
+  if (t < 15 || speed < 8) return 2;
+  return 3;
 }

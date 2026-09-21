@@ -97,11 +97,18 @@ export function heuristicDecide(state: DecideState): Omit<
     return { action: "run", probabilities: empty, confidence: 1, source: "heuristic" };
   }
 
-  const timeToHit = next.dx / Math.max(state.speed, 0.1);
-  const jumpWindow = next.type === "bird" ? 0 : 0.42;
-  const duckWindow = 0.38;
+  // Game scrolls at roughly speed * 60 px/s (Chromium FPS scaling).
+  const pxPerSec = Math.max(state.speed, 0.1) * 60;
+  const timeToHit = next.dx / pxPerSec;
+  const jumpLead = Math.min(0.55, 0.28 + next.width / 220);
+  const duckLead = 0.4;
 
-  if (next.type === "bird" && next.y < 90 && timeToHit < duckWindow && timeToHit > 0.02) {
+  if (
+    next.type === "bird" &&
+    next.y < 85 &&
+    timeToHit < duckLead &&
+    timeToHit > 0.05
+  ) {
     return {
       action: "duck",
       probabilities: { run: 0.05, jump: 0.1, duck: 0.85 },
@@ -110,7 +117,12 @@ export function heuristicDecide(state: DecideState): Omit<
     };
   }
 
-  if (next.type !== "bird" && timeToHit < jumpWindow && timeToHit > 0.02 && state.dino.grounded) {
+  if (
+    next.type !== "bird" &&
+    timeToHit < jumpLead &&
+    timeToHit > 0.04 &&
+    state.dino.grounded
+  ) {
     return {
       action: "jump",
       probabilities: { run: 0.05, jump: 0.9, duck: 0.05 },
@@ -120,7 +132,12 @@ export function heuristicDecide(state: DecideState): Omit<
   }
 
   // Low birds: jump instead of duck
-  if (next.type === "bird" && next.y >= 90 && timeToHit < jumpWindow && state.dino.grounded) {
+  if (
+    next.type === "bird" &&
+    next.y >= 85 &&
+    timeToHit < jumpLead &&
+    state.dino.grounded
+  ) {
     return {
       action: "jump",
       probabilities: { run: 0.1, jump: 0.8, duck: 0.1 },

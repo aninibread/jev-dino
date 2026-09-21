@@ -12,7 +12,7 @@ export const GRAVITY = 0.6;
 export const INITIAL_JUMP_VELOCITY = 12;
 export const SPEED_DROP_COEFFICIENT = 3;
 
-export const CLEAR_TIME_MS = 1200;
+export const CLEAR_TIME_MS = 2800;
 
 export const SPRITE_LDPI = {
   CACTUS_LARGE: { x: 332, y: 2 },

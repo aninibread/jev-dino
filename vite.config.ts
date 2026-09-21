@@ -5,7 +5,11 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [
-    cloudflare({ viteEnvironment: { name: "ssr" } }),
+    cloudflare({
+      viteEnvironment: { name: "ssr" },
+      // Local UI testing without Cloudflare auth; AI falls back to heuristic.
+      remoteBindings: false,
+    }),
     tailwindcss(),
     reactRouter(),
   ],
