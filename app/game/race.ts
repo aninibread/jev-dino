@@ -58,6 +58,8 @@ export class RaceGame {
   winner: Winner = null;
   lastJev: DecideResponse | null = null;
   private spectateElapsedMs = 0;
+  /** Frozen bitmap of the YOU lane after crash (spectate / ended). */
+  private youFreeze: HTMLCanvasElement | null = null;
   private raf = 0;
   private lastTime = 0;
   private keys = new Set<string>();
@@ -204,6 +206,7 @@ export class RaceGame {
     this.elapsedMs = 0;
     this.clearTimer = 0;
     this.spectateElapsedMs = 0;
+    this.youFreeze = null;
     this.speed = BASE_SPEED;
     this.winner = null;
     this.youDistance = 0;
@@ -302,9 +305,12 @@ export class RaceGame {
       this.obstacles.update(deltaTime, this.speed, this.elapsedMs);
     }
 
-    this.horizonYou.update(deltaTime, this.speed);
+    // YOU lane freezes on crash; only Jev's world keeps scrolling.
+    if (this.phase === "playing") {
+      this.horizonYou.update(deltaTime, this.speed);
+      this.cloudsYou.update(deltaTime, this.speed);
+    }
     this.horizonJev.update(deltaTime, this.speed);
-    this.cloudsYou.update(deltaTime, this.speed);
     this.cloudsJev.update(deltaTime, this.speed);
 
     if (this.phase === "playing" && !this.you.crashed) {
@@ -312,9 +318,6 @@ export class RaceGame {
       if (this.duckHeld) this.you.setDuck(true);
       this.you.update(deltaTime);
       this.youDistance += this.speed * deltaTime * 0.1;
-    } else if (this.you.crashed) {
-      // Keep crashed pose frozen; still tick anim timer lightly via update.
-      this.you.update(deltaTime);
     }
 
     if (!this.jev.crashed) {
@@ -349,7 +352,24 @@ export class RaceGame {
     this.winner = "jev";
     this.spectateElapsedMs = 0;
     this.duckHeld = false;
+    this.captureYouLane();
     this.emit();
+  }
+
+  /** Snapshot the YOU lane so it stays a still frame while Jev keeps running. */
+  private captureYouLane() {
+    const freeze = document.createElement("canvas");
+    freeze.width = DEFAULT_WIDTH;
+    freeze.height = LANE_HEIGHT;
+    const ctx = freeze.getContext("2d");
+    if (!ctx) return;
+    ctx.fillStyle = "#f7f7f7";
+    ctx.fillRect(0, 0, DEFAULT_WIDTH, LANE_HEIGHT);
+    this.cloudsYou.draw(ctx, this.sprite, 0);
+    this.horizonYou.draw(ctx, this.sprite, 0);
+    this.obstacles.draw(ctx, this.sprite, 0);
+    this.you.draw(ctx, this.sprite, 0);
+    this.youFreeze = freeze;
   }
 
   private resolveEnd() {
@@ -424,7 +444,11 @@ export class RaceGame {
 
   draw() {
     this.ctx.clearRect(0, 0, DEFAULT_WIDTH, this.height);
-    this.drawLane(0, this.you, this.horizonYou, this.cloudsYou);
+    if (this.youFreeze) {
+      this.ctx.drawImage(this.youFreeze, 0, 0);
+    } else {
+      this.drawLane(0, this.you, this.horizonYou, this.cloudsYou);
+    }
     this.drawLane(LANE_HEIGHT + LANE_GAP, this.jev, this.horizonJev, this.cloudsJev);
 
     // Divider
