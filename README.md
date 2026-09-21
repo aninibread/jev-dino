@@ -11,6 +11,8 @@ npm run dev
 
 Requires a Cloudflare account with Workers AI access for live Jev decisions. If AI is unavailable, the Worker falls back to a local heuristic so the race still runs.
 
+Local `npm run dev` sets `remoteBindings: false` in `vite.config.ts` so the app starts without a Cloudflare API token; Jev calls then use the heuristic backup. Deployed Workers (or `remoteBindings: true` with auth) use live `typesafe/jev`.
+
 ## Deploy
 
 ```bash
