@@ -40,8 +40,33 @@ export function RaceCanvas() {
     };
   }, []);
 
+  useEffect(() => {
+    // If duck is held and the pointer ends anywhere, release it.
+    function releaseDuck() {
+      gameRef.current?.pressDuck(false);
+    }
+    window.addEventListener("pointerup", releaseDuck);
+    window.addEventListener("pointercancel", releaseDuck);
+    window.addEventListener("blur", releaseDuck);
+    return () => {
+      window.removeEventListener("pointerup", releaseDuck);
+      window.removeEventListener("pointercancel", releaseDuck);
+      window.removeEventListener("blur", releaseDuck);
+    };
+  }, []);
+
   const phase = snapshot?.phase ?? "idle";
   const lastJev: DecideResponse | null = snapshot?.lastJev ?? null;
+
+  function onJumpPointer(event: React.PointerEvent) {
+    event.preventDefault();
+    gameRef.current?.pressJump();
+  }
+
+  function onDuckPointer(event: React.PointerEvent, down: boolean) {
+    event.preventDefault();
+    gameRef.current?.pressDuck(down);
+  }
 
   return (
     <div className="race-stage">
@@ -49,7 +74,7 @@ export function RaceCanvas() {
         ref={canvasRef}
         className="race-canvas"
         role="img"
-        aria-label="Chrome dinosaur race against Jev"
+        aria-label="Chrome dinosaur race against Jev. Tap to jump."
       />
       {!ready && !error && (
         <p className="race-status muted">Loading track…</p>
@@ -67,23 +92,27 @@ export function RaceCanvas() {
         )}
       </div>
 
-      <div className="touch-controls">
+      <div className="touch-controls" aria-label="Touch controls">
         <button
           type="button"
-          onPointerDown={() => gameRef.current?.pressJump()}
+          className="touch-btn touch-jump"
+          onPointerDown={onJumpPointer}
         >
           Jump
         </button>
         <button
           type="button"
-          onPointerDown={() => gameRef.current?.pressDuck(true)}
-          onPointerUp={() => gameRef.current?.pressDuck(false)}
-          onPointerLeave={() => gameRef.current?.pressDuck(false)}
-          onPointerCancel={() => gameRef.current?.pressDuck(false)}
+          className="touch-btn touch-duck"
+          onPointerDown={(event) => onDuckPointer(event, true)}
+          onPointerUp={(event) => onDuckPointer(event, false)}
+          onPointerLeave={(event) => onDuckPointer(event, false)}
+          onPointerCancel={(event) => onDuckPointer(event, false)}
         >
           Duck
         </button>
       </div>
+
+      <p className="touch-hint muted">Tap the track or Jump. Hold Duck for birds.</p>
 
       <div className="race-actions">
         {phase !== "playing" && (

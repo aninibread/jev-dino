@@ -50,8 +50,8 @@ function Rules() {
   return (
     <div className="rules-content">
       <p>
-        <b>You</b> control the top dinosaur. Space / ↑ jump, ↓ duck. On
-        phones, use the Jump and Duck buttons.
+        <b>You</b> control the top dinosaur. On desktop: Space / ↑ jump, ↓ duck.
+        On phones: tap the track or Jump; hold Duck for birds.
       </p>
       <p>
         <b>Jev</b> runs the bottom lane on the same obstacles, deciding jump,
@@ -87,7 +87,7 @@ export default function Home() {
       <main className="page">
         <section className="intro">
           <h1>Race Jev</h1>
-          <p>Same obstacles. Faster every second. One minute max.</p>
+          <p>Same obstacles. Faster every second. Tap or press Space to race.</p>
         </section>
 
         <RaceCanvas />

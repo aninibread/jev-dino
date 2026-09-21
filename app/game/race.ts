@@ -95,14 +95,18 @@ export class RaceGame {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.canvas.width = DEFAULT_WIDTH * dpr;
     this.canvas.height = this.height * dpr;
-    this.canvas.style.width = `${DEFAULT_WIDTH}px`;
-    this.canvas.style.height = `${this.height}px`;
+    // Let CSS control display size so the canvas can shrink on phones.
+    this.canvas.style.width = "100%";
+    this.canvas.style.height = "auto";
+    this.canvas.style.aspectRatio = `${DEFAULT_WIDTH} / ${this.height}`;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
   private bindInput() {
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
+    window.addEventListener("resize", this.onResize);
+    this.canvas.addEventListener("pointerdown", this.onCanvasPointerDown);
   }
 
   destroy() {
@@ -110,7 +114,21 @@ export class RaceGame {
     this.jevController.stop();
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);
+    window.removeEventListener("resize", this.onResize);
+    this.canvas.removeEventListener("pointerdown", this.onCanvasPointerDown);
   }
+
+  private onResize = () => {
+    this.resize();
+    this.draw();
+  };
+
+  private onCanvasPointerDown = (event: PointerEvent) => {
+    // Tap / click the track to jump (or start). Ignore right-click.
+    if (event.button !== 0) return;
+    event.preventDefault();
+    this.pressJump();
+  };
 
   private onKeyDown = (event: KeyboardEvent) => {
     if (["Space", "ArrowUp", "ArrowDown", "Enter"].includes(event.code)) {
@@ -353,7 +371,11 @@ export class RaceGame {
       this.ctx.fillStyle = "#191919";
       this.ctx.font = "600 16px Arial, Helvetica, sans-serif";
       this.ctx.textAlign = "center";
-      this.ctx.fillText("Press space to race Jev", DEFAULT_WIDTH / 2, this.height / 2);
+      this.ctx.fillText(
+        "Tap or press space to race Jev",
+        DEFAULT_WIDTH / 2,
+        this.height / 2,
+      );
       this.ctx.textAlign = "start";
     }
   }
