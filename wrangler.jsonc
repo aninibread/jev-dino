@@ -5,6 +5,7 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "dino",
+	"account_id": "323f42859527b406beadd91bff779583",
 	"compatibility_date": "2026-09-21",
 	"main": "./workers/app.ts",
 	"ai": {
