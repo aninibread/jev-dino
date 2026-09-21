@@ -39,6 +39,34 @@ Prefer look-and-feel fidelity to Chromium’s offline game (monochrome T-Rex, ca
 
 ---
 
+## UI vibes (from [jev-3s](https://github.com/aninibread/jev-3s), not a clone)
+
+Reference the recent **3s** demo for shell polish only — same family of Jev demos, different product. Do **not** copy its food/gallery layout, mode tabs, verdict cards, or emoji floats.
+
+Steal the feel:
+
+- **Sparse chrome.** Brand left, one quiet nav action (e.g. Rules), credits/attribution in a thin footer. No dashboard clutter.
+- **One centered composition.** Content sits in a calm column with generous whitespace; the thing that matters (here: the race canvas) is the hero, not a card grid of secondary widgets.
+- **Quiet hierarchy.** Big tight headline + one short supporting line. Muted secondary text. Near-black primary actions; ghost/outline secondaries.
+- **Soft paper/ink restraint.** Light warm-neutral field, hairline borders, very light shadows — calm enough that Chromium’s monochrome dino still reads as the visual star.
+- **Honest status, not spectacle.** Thinking/deciding states are a small spinner + muted copy (“Jev is deciding…”), not loading theater.
+- **Rules & credits as dialogs.** Keep the main surface empty until play starts.
+- **Short playful copy.** Argue lightly (“Race Jev. Don’t blink.”) without over-explaining.
+- **Motion with restraint.** A couple of short functional transitions; respect `prefers-reduced-motion`.
+
+What this means for dino specifically:
+
+| Surface | Direction |
+|---------|-----------|
+| Start | Brand + one headline + one line + **Race Jev** CTA; canvas idle/waiting under it |
+| In race | Full-bleed-feeling canvas; tiny HUD (timer, YOU/JEV status) — no stat strips or promo chips |
+| End | Simple winner line + scores + **Race again**; optional collapsed “Jev’s last calls” disclosure, not a probability dashboard by default |
+| Debug | Probability bars / latency behind a toggle — 3s-style thin ink bars if shown |
+
+The **game itself** stays Chrome-dino faithful (sprites, gray desert, hitboxes). The **page shell** should feel like the same minimal Jev-demo family as 3s, not a marketing landing page and not a carbon copy of 3s.
+
+---
+
 ## Product shape
 
 ### Race fantasy
@@ -52,7 +80,7 @@ Prefer look-and-feel fidelity to Chromium’s offline game (monochrome T-Rex, ca
   1. Opponent crashes first → you win
   2. You crash first → Jev wins
   3. Both survive to 60s → higher distance/score wins (tie-break: who last jumped successfully / shared score)
-- UI: classic dino aesthetic + clear labels (“YOU” / “JEV”), live timer, speed indicator, Jev’s last decision (optional debug: probabilities).
+- UI shell follows the vibes section above; in-canvas labels stay minimal (“YOU” / “JEV”), with live timer and optional debug for Jev’s last decision.
 
 ### Difficulty / speed curve (critical)
 
@@ -193,7 +221,7 @@ Commit and review before coding.
 ### Phase 4 — Polish & deploy
 
 - Mobile touch controls for the human.
-- Start screen: “Race Jev”, short rules, CTA.
+- Minimal shell à la 3s vibes: sparse header/footer, start CTA, rules dialog, quiet end state.
 - README: how to run, AI binding, attribution for dino assets.
 - `npm run deploy` via Wrangler; verify Workers AI access in the target account.
 
@@ -245,7 +273,8 @@ Exact filenames may shift once we inspect the chosen clone’s structure; keep p
 2. Human and Jev race the **same** obstacle sequence.
 3. Speed ramps hard; games end by **60s**; late game is extremely difficult for humans.
 4. Jev actions come from Workers AI `typesafe/jev` (not a fake script pretending to be AI), with a documented fallback.
-5. Deployable with `wrangler` from this React Router + Workers template.
+5. Page shell feels like the same minimal Jev-demo family as [jev-3s](https://github.com/aninibread/jev-3s) (sparse chrome, quiet copy) without cloning that UI.
+6. Deployable with `wrangler` from this React Router + Workers template.
 
 ---
 
@@ -255,6 +284,7 @@ Exact filenames may shift once we inspect the chosen clone’s structure; keep p
 - Accounts / leaderboards (can add later with D1/KV)
 - LLM-generated commentary (Jev cannot generate text; use static/copy or a separate model later)
 - Pixel-perfect Chromium arcade mode parity beyond core feel
+- Copying jev-3s layouts (gallery, mode tabs, verdict cards, floating emojis)
 
 ---
 
@@ -265,6 +295,15 @@ Exact filenames may shift once we inspect the chosen clone’s structure; keep p
 3. Wire speed curve + 60s cap.
 4. Duplicate dino + shared obstacles.
 5. Connect Jev controller and tune until the race is fun and Jev visibly “plays.”
-6. Deploy and smoke-test.
+6. Apply minimal shell polish (3s vibes), then deploy and smoke-test.
 
 Do not start Phase 1 until this plan is reviewed/accepted (or explicitly greenlit to proceed).
+
+---
+
+## References
+
+- Prior UI vibe reference (minimal Jev demo, do not clone): https://github.com/aninibread/jev-3s
+- LangChain on building with Jev: https://www.langchain.com/blog/building-a-harness-with-jev
+- Jev on Workers AI: https://developers.cloudflare.com/ai/models/typesafe/jev/
+- Chromium T-Rex extraction: https://github.com/wayou/t-rex-runner
