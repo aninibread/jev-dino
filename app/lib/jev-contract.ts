@@ -94,7 +94,16 @@ export function jumpEarliestSeconds(width: number, speed: number): number {
 }
 
 export function duckLeadSeconds(speed: number): number {
-  return Math.min(0.28, Math.max(0.14, 0.16 + speed / 120));
+  // Start early enough that the duck hitbox is active before the bird arrives.
+  return Math.min(0.45, Math.max(0.24, 0.26 + speed / 90));
+}
+
+/** How long the bird (or duck hazard) overlaps the dino after impact. */
+export function duckPassSeconds(width: number, speed: number): number {
+  const pps = Math.max(speed, 0.1) * 60;
+  // Ducking hitbox is wider (WIDTH_DUCK=59); pad so we don't stand into the bird.
+  const duckBody = 59;
+  return (duckBody * 0.75 + width) / pps;
 }
 
 export function clearanceFor(
@@ -123,9 +132,18 @@ export function inJumpWindow(
   return timeToImpact > 0.02 && timeToImpact <= maxTti;
 }
 
-export function inDuckWindow(timeToImpact: number, speed: number): boolean {
+/**
+ * Duck from lead before impact until the bird has fully cleared the body.
+ * Old window ended at tti > -0.02 and stood up into the bird.
+ */
+export function inDuckWindow(
+  timeToImpact: number,
+  width: number,
+  speed: number,
+): boolean {
   const lead = duckLeadSeconds(speed);
-  return timeToImpact > -0.02 && timeToImpact <= lead + 0.08;
+  const holdAfter = duckPassSeconds(width, speed) + 0.1;
+  return timeToImpact > -holdAfter && timeToImpact <= lead;
 }
 
 /** Estimate seconds until ground from current jump velocity / height. */
@@ -230,14 +248,22 @@ export function planAction(state: DecideState): {
     };
   }
 
-  // --- Grounded: duck birds ---
+  // --- Grounded: duck birds (hold through full pass) ---
   if (next.clearance === "duck") {
-    const duck = inDuckWindow(next.time_to_impact, state.speed);
+    const duck = inDuckWindow(
+      next.time_to_impact,
+      next.width,
+      state.speed,
+    );
     return {
       action: duck ? "duck" : "run",
       jump_now: 0.05,
       duck_now: duck ? 0.95 : 0.05,
-      reason: duck ? "duck bird" : "wait for duck window",
+      reason: duck
+        ? next.time_to_impact < 0
+          ? "hold duck through bird pass"
+          : "duck bird"
+        : "wait for duck window",
       chain_active: false,
     };
   }

@@ -127,9 +127,9 @@ export async function decideWithJev(
         duck_now: {
           type: "noul",
           instructions:
-            "Should the dinosaur DUCK or SPEED-DROP RIGHT NOW? Two valid cases: (1) Grounded + clearance duck + tti in duck window → duck under a low bird. (2) Airborne chaining: ascending is false, and either tactics_reason mentions speed-drop / chain, or chain_with_next with tti small, or nearest jumpable is 0.2–0.65s away while still airborne → duck to slam down (speed-drop) so the next jump can happen sooner. Otherwise near 0. Prefer decision_hint.tactics_recommended === duck.",
+            "Should the dinosaur DUCK or SPEED-DROP RIGHT NOW? Two valid cases: (1) Grounded + clearance duck + tti within duck_lead_seconds BEFORE impact through a short NEGATIVE tti AFTER impact (hold crouch until the bird fully passes — standing early hits it). (2) Airborne chaining: ascending is false, and either tactics_reason mentions speed-drop / chain, or chain_with_next with tti small, or nearest jumpable is 0.2–0.65s away while still airborne → duck to slam down (speed-drop) so the next jump can happen sooner. Otherwise near 0. Prefer decision_hint.tactics_recommended === duck.",
           criteria: {
-            true: "Duck for a bird, OR mid-air speed-drop to chain the next jump.",
+            true: "Duck under a bird and KEEP ducking through the pass, OR mid-air speed-drop to chain the next jump.",
             false: "Do not duck or speed-drop.",
           },
         },

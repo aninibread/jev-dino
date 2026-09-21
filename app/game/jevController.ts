@@ -117,15 +117,27 @@ export class JevController {
         action = "duck";
       }
     } else if (next.clearance === "duck") {
-      if (duck >= 0.45 && inDuckWindow(tti, state.speed)) action = "duck";
+      // Local physics owns bird ducks — re-asks must not stand us up mid-pass.
+      duck = Math.max(duck, local.duck_now);
+      if (
+        local.action === "duck" ||
+        (duck >= 0.45 && inDuckWindow(tti, next.width, state.speed))
+      ) {
+        action = "duck";
+      }
     } else if (state.dino.grounded) {
       if (jump >= 0.45 && inJumpWindow(tti, next.width, state.speed)) {
         action = "jump";
       }
     }
 
-    // Prefer local plan when it says chain speed-drop / jump in window.
-    if (local.action !== "run" && (local.chain_active || !hasBelief)) {
+    // Prefer local plan for chains, bird holds, or when beliefs are cold.
+    if (
+      local.action !== "run" &&
+      (local.chain_active ||
+        next.clearance === "duck" ||
+        !hasBelief)
+    ) {
       action = local.action;
       jump = Math.max(jump, local.jump_now);
       duck = Math.max(duck, local.duck_now);
