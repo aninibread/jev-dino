@@ -1,4 +1,5 @@
 import { createRequestHandler } from "react-router";
+import { handleApi } from "./api";
 
 const requestHandler = createRequestHandler(
   () => import("virtual:react-router/server-build"),
@@ -6,7 +7,10 @@ const requestHandler = createRequestHandler(
 );
 
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
+    if (new URL(request.url).pathname.startsWith("/api/")) {
+      return handleApi(request, env);
+    }
     return requestHandler(request);
   },
 } satisfies ExportedHandler<Env>;
