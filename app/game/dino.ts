@@ -13,6 +13,11 @@ import { boxesOverlap } from "./collision";
 
 export type DinoStatus = "WAITING" | "RUNNING" | "JUMPING" | "DUCKING" | "CRASHED";
 
+/**
+ * Chromium T-rex duck behavior (offline.js):
+ * - Grounded: switch to DUCKING sprite/hitbox immediately.
+ * - Mid-air: setSpeedDrop() — jumpVelocity = 1, fall 3× fast, then duck on land.
+ */
 export class Dino {
   xPos = TREX.START_X;
   yPos = 0;
@@ -90,11 +95,22 @@ export class Dino {
     }
   }
 
+  /** Immediately cancel jump and slam down (Chromium setSpeedDrop). */
+  setSpeedDrop() {
+    this.speedDrop = true;
+    this.jumpVelocity = 1;
+  }
+
   setDuck(isDucking: boolean) {
-    if (this.crashed || this.jumping) {
-      if (isDucking) this.speedDrop = true;
+    if (this.crashed) return;
+
+    // Mid-air duck = fast fall, not crouch pose (still airborne).
+    if (this.jumping) {
+      if (isDucking) this.setSpeedDrop();
+      else this.speedDrop = false;
       return;
     }
+
     if (isDucking && this.status !== "DUCKING") {
       this.ducking = true;
       this.setStatus("DUCKING");
@@ -114,27 +130,49 @@ export class Dino {
       this.timer = 0;
     }
 
+    if (this.jumping) {
+      this.updateJump(deltaTime);
+    }
+
+    // After a speed-drop landing, crouch if duck is still held (race re-applies).
+    if (this.speedDrop && this.yPos === this.groundYPos) {
+      this.speedDrop = false;
+      this.setDuck(true);
+    }
+  }
+
+  /** Chromium Trex.updateJump — gravity always; speedDrop multiplies fall. */
+  private updateJump(deltaTime: number) {
+    const framesElapsed = deltaTime / (1000 / 60);
+
     if (this.speedDrop) {
       this.yPos += Math.round(
-        this.jumpVelocity * SPEED_DROP_COEFFICIENT * (deltaTime / (1000 / 60)),
+        this.jumpVelocity * SPEED_DROP_COEFFICIENT * framesElapsed,
       );
-    } else if (this.jumping) {
-      this.yPos += Math.round(this.jumpVelocity * (deltaTime / (1000 / 60)));
-      this.jumpVelocity += GRAVITY * (deltaTime / (1000 / 60));
-      if (this.yPos > this.minJumpHeight) {
-        this.reachedMinHeight = true;
-      }
+    } else {
+      this.yPos += Math.round(this.jumpVelocity * framesElapsed);
+    }
+
+    this.jumpVelocity += GRAVITY * framesElapsed;
+
+    if (this.yPos < this.minJumpHeight || this.speedDrop) {
+      this.reachedMinHeight = true;
+    }
+
+    if (this.speedDrop) {
+      this.endJump();
     }
 
     if (this.yPos > this.groundYPos) {
       this.yPos = this.groundYPos;
       this.jumping = false;
-      this.speedDrop = false;
       this.jumpVelocity = 0;
       if (!this.crashed) {
+        // Duck pose applied via speedDrop→setDuck below or duckHeld re-apply.
         if (this.ducking) this.setStatus("DUCKING");
         else this.setStatus("RUNNING");
       }
+      // Leave speedDrop set so the grounded check can crouch this frame.
     }
   }
 
@@ -142,6 +180,7 @@ export class Dino {
     this.crashed = true;
     this.jumping = false;
     this.ducking = false;
+    this.speedDrop = false;
     this.setStatus("CRASHED");
   }
 
@@ -177,18 +216,15 @@ export class Dino {
   ) {
     const frame = this.animFrames[this.currentFrame] ?? 0;
     const ducking = this.status === "DUCKING";
+    // Chromium: duck uses WIDTH_DUCK × HEIGHT (full cell; crouch is at the bottom).
     const sourceWidth = ducking ? TREX.WIDTH_DUCK : TREX.WIDTH;
-    const sourceHeight = ducking ? TREX.HEIGHT_DUCK : TREX.HEIGHT;
+    const sourceHeight = TREX.HEIGHT;
     const sourceX = SPRITE_LDPI.TREX.x + frame;
     const sourceY = SPRITE_LDPI.TREX.y;
-    const drawY =
-      laneOffsetY +
-      this.yPos +
-      (ducking ? TREX.HEIGHT - TREX.HEIGHT_DUCK : 0);
+    const drawY = laneOffsetY + this.yPos;
 
     ctx.save();
     if (this.tint) {
-      // Draw to offscreen-ish via globalComposite isn't trivial; use filter for distinction.
       ctx.filter = this.tint;
     }
     ctx.drawImage(
