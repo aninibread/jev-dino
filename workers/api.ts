@@ -1,5 +1,8 @@
 import {
+  LOOKAHEAD_COUNT,
+  buildTactics,
   clearanceFor,
+  enrichUpcoming,
   type DecideState,
   type ObstacleKind,
 } from "../app/lib/jev-contract";
@@ -74,14 +77,24 @@ function parseState(raw: Record<string, unknown>): DecideState {
   ) {
     throw new ApiError(400, "Invalid dino state.");
   }
-  if (upcoming.length > 3) throw new ApiError(400, "Too many obstacles.");
+  if (upcoming.length > LOOKAHEAD_COUNT) {
+    throw new ApiError(400, "Too many obstacles.");
+  }
 
   const px_per_sec =
     typeof raw.px_per_sec === "number" && raw.px_per_sec > 0
       ? raw.px_per_sec
       : Math.max(raw.speed, 0.1) * 60;
 
-  const parsedUpcoming: DecideState["upcoming"] = [];
+  const parsedRaw: Array<{
+    type: ObstacleKind;
+    dx: number;
+    width: number;
+    height: number;
+    y: number;
+    time_to_impact: number;
+    clearance: ReturnType<typeof clearanceFor>;
+  }> = [];
   for (const item of upcoming) {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
       throw new ApiError(400, "Invalid obstacle.");
@@ -101,22 +114,26 @@ function parseState(raw: Record<string, unknown>): DecideState {
       typeof o.time_to_impact === "number"
         ? o.time_to_impact
         : o.dx / px_per_sec;
-    parsedUpcoming.push({
+    const clearance =
+      o.clearance === "jump" ||
+      o.clearance === "duck" ||
+      o.clearance === "either" ||
+      o.clearance === "clear"
+        ? o.clearance
+        : clearanceFor(type, o.y);
+    parsedRaw.push({
       type,
       dx: o.dx,
       width: o.width,
       height: o.height,
       y: o.y,
       time_to_impact,
-      clearance:
-        o.clearance === "jump" ||
-        o.clearance === "duck" ||
-        o.clearance === "either"
-          ? o.clearance
-          : clearanceFor(type, o.y),
+      clearance,
     });
   }
-  return {
+
+  const upcomingEnriched = enrichUpcoming(parsedRaw);
+  const partial = {
     t: raw.t,
     speed: raw.speed,
     px_per_sec,
@@ -125,8 +142,15 @@ function parseState(raw: Record<string, unknown>): DecideState {
       vy: d.vy,
       ducking: d.ducking,
       grounded: d.grounded,
+      ascending: typeof d.ascending === "boolean" ? d.ascending : false,
+      est_landing_s:
+        typeof d.est_landing_s === "number" ? d.est_landing_s : 0,
     },
-    upcoming: parsedUpcoming,
+    upcoming: upcomingEnriched,
+  };
+  return {
+    ...partial,
+    tactics: buildTactics(partial),
   };
 }
 
@@ -138,7 +162,7 @@ export async function handleApi(
   try {
     if (url.pathname === "/api/jev-decide" && request.method === "POST") {
       const value: unknown = JSON.parse(
-        new TextDecoder().decode(await limitedBody(request, 4096)),
+        new TextDecoder().decode(await limitedBody(request, 12_288)),
       );
       if (!value || typeof value !== "object" || Array.isArray(value)) {
         throw new ApiError(400, "Please send JSON.");

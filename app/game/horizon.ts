@@ -1,8 +1,9 @@
-import { DEFAULT_WIDTH, LANE_HEIGHT, SPRITE_LDPI } from "./constants";
+import { DEFAULT_WIDTH, SPRITE_LDPI } from "./constants";
 
 export class HorizonLine {
   xPos = [0, DEFAULT_WIDTH] as [number, number];
-  yPos = LANE_HEIGHT - 12;
+  /** Chromium HorizonLine.config.YPOS — ground line under dino/cactus feet. */
+  yPos = 127;
   sourceX = SPRITE_LDPI.HORIZON.x;
   sourceY = SPRITE_LDPI.HORIZON.y;
   width = 600;

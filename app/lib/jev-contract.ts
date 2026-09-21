@@ -9,7 +9,14 @@
  */
 
 export type ObstacleKind = "cactus-small" | "cactus-large" | "bird";
-export type Clearance = "jump" | "duck" | "either";
+/**
+ * How to clear the hazard while grounded:
+ * - jump: must jump (cacti, low birds)
+ * - duck: must duck (mid-high birds that hit a standing dino)
+ * - either: jump or duck both work (mid birds)
+ * - clear: high birds that pass over a standing dino — do nothing
+ */
+export type Clearance = "jump" | "duck" | "either" | "clear";
 
 export type UpcomingObstacle = {
   type: ObstacleKind;
@@ -43,6 +50,7 @@ export type DecideState = {
     /** Rough seconds until landing if still airborne. */
     est_landing_s: number;
   };
+  /** All hazards currently in the decision window (nearest first). */
   upcoming: UpcomingObstacle[];
   /** Precomputed tactics for Jev + the local planner. */
   tactics: {
@@ -69,8 +77,15 @@ export type DecideResponse = {
 /** Matching Trex jump with v0=-10, gravity=0.6 at 60fps (see dino.ts). */
 export const JUMP_AIRTIME_S = 0.58;
 export const JUMP_TIME_TO_CLEAR_S = 0.05;
-/** Natural landing leaves ~this much slack before the next jumpable feels tight. */
-export const CHAIN_GAP_S = 0.62;
+/**
+ * Only chain (speed-drop) when the next jumpable is closer than a full arc
+ * minus a little react slack. Wider gaps: ride the natural landing.
+ */
+export const CHAIN_GAP_S = 0.5;
+/** How far ahead (seconds) we include obstacles in Jev's window. */
+export const LOOKAHEAD_S = 2.2;
+/** Cap on obstacles sent in one decide payload. */
+export const LOOKAHEAD_COUNT = 6;
 const DINO_BODY_WIDTH = 44;
 const GRAVITY = 0.6;
 
@@ -106,13 +121,46 @@ export function duckPassSeconds(width: number, speed: number): number {
   return (duckBody * 0.75 + width) / pps;
 }
 
+/**
+ * Chromium bird yPos: [100 low, 75 mid, 50 high].
+ * High birds clear a standing dino; mid can jump or duck; low must jump.
+ */
 export function clearanceFor(
   type: ObstacleKind,
   y: number,
 ): Clearance {
-  if (type === "bird" && y < 85) return "duck";
-  if (type === "bird") return "either";
+  if (type !== "bird") return "jump";
+  if (y <= 55) return "clear";
+  if (y <= 80) return "either";
   return "jump";
+}
+
+export function needsJump(clearance: Clearance): boolean {
+  return clearance === "jump" || clearance === "either";
+}
+
+export function needsAction(clearance: Clearance): boolean {
+  return clearance !== "clear";
+}
+
+/** Nearest hazard that actually requires a response (skip overhead birds). */
+export function nextActionable(
+  upcoming: UpcomingObstacle[],
+): UpcomingObstacle | null {
+  return upcoming.find((o) => needsAction(o.clearance)) ?? null;
+}
+
+/**
+ * High (clear) birds are safe while standing, but a jump arc rises into them.
+ * Block jumps while a clear bird is still in the airspace.
+ */
+export function clearBirdBlocksJump(upcoming: UpcomingObstacle[]): boolean {
+  return upcoming.some(
+    (o) =>
+      o.clearance === "clear" &&
+      o.time_to_impact > -0.25 &&
+      o.time_to_impact < JUMP_AIRTIME_S + 0.05,
+  );
 }
 
 export function pickAction(jump_now: number, duck_now: number): JevAction {
@@ -166,12 +214,12 @@ export function estimateLandingSeconds(
 }
 
 /**
- * Mid-air speed-drop: we've cleared (or nearly cleared) the current jumpable
- * and the next jumpable is close enough that a full arc would make us late.
+ * Mid-air speed-drop: only when the next jumpable is genuinely too close
+ * for a full natural landing.
  */
 export function shouldSpeedDrop(state: DecideState): boolean {
   if (state.dino.grounded) return false;
-  const next = state.upcoming[0];
+  const next = nextActionable(state.upcoming);
   if (!next) return false;
 
   // Still rising into the hazard — don't cancel the jump.
@@ -180,7 +228,7 @@ export function shouldSpeedDrop(state: DecideState): boolean {
   // Case A: nearest is still the cactus we're clearing — drop once past apex
   // if a chained follow-up is tight.
   if (
-    next.clearance !== "duck" &&
+    needsJump(next.clearance) &&
     next.chain_with_next &&
     !state.dino.ascending &&
     next.time_to_impact < 0.2
@@ -188,18 +236,18 @@ export function shouldSpeedDrop(state: DecideState): boolean {
     return true;
   }
 
-  // Case B: nearest is already the FOLLOW-UP (previous cleared). We're airborne
-  // with a jumpable 0.2–0.65s out — slam down so we can jump again.
+  // Case B: nearest is already the FOLLOW-UP (previous cleared). Only slam
+  // when that follow-up itself is in the tight chain band — not every gap.
   if (
-    next.clearance !== "duck" &&
+    needsJump(next.clearance) &&
     !state.dino.ascending &&
-    next.time_to_impact > 0.2 &&
+    next.time_to_impact > 0.15 &&
     next.time_to_impact < CHAIN_GAP_S
   ) {
     return true;
   }
 
-  // Case C: low bird while airborne from a prior jump — duck/speed-drop to pose.
+  // Case C: must-duck bird while airborne from a prior jump.
   if (next.clearance === "duck" && next.time_to_impact < 0.35) {
     return true;
   }
@@ -215,13 +263,13 @@ export function planAction(state: DecideState): {
   reason: string;
   chain_active: boolean;
 } {
-  const next = state.upcoming[0];
+  const next = nextActionable(state.upcoming);
   if (!next) {
     return {
       action: "run",
       jump_now: 0,
       duck_now: state.dino.ducking ? 0.5 : 0,
-      reason: "no hazard",
+      reason: "no hazard (overhead birds clear)",
       chain_active: false,
     };
   }
@@ -235,7 +283,7 @@ export function planAction(state: DecideState): {
         duck_now: 0.95,
         reason: next.chain_with_next
           ? "speed-drop to chain next jump"
-          : "speed-drop to land for next hazard",
+          : "speed-drop — next jumpable too close",
         chain_active: true,
       };
     }
@@ -248,7 +296,7 @@ export function planAction(state: DecideState): {
     };
   }
 
-  // --- Grounded: duck birds (hold through full pass) ---
+  // --- Grounded: duck birds that require duck ---
   if (next.clearance === "duck") {
     const duck = inDuckWindow(
       next.time_to_impact,
@@ -268,7 +316,57 @@ export function planAction(state: DecideState): {
     };
   }
 
-  // --- Grounded: jump cacti / high birds (late window) ---
+  // --- Grounded: either (mid bird) — jump or duck; prefer jump ---
+  if (next.clearance === "either") {
+    const birdBlocks = clearBirdBlocksJump(state.upcoming);
+    const jump =
+      !birdBlocks &&
+      inJumpWindow(next.time_to_impact, next.width, state.speed);
+    const duck = inDuckWindow(
+      next.time_to_impact,
+      next.width,
+      state.speed,
+    );
+    // Prefer jump; duck is a valid backup inside the duck window.
+    if (jump) {
+      return {
+        action: "jump",
+        jump_now: 0.9,
+        duck_now: 0.15,
+        reason: "mid bird — jump (either)",
+        chain_active: Boolean(next.chain_with_next),
+      };
+    }
+    if (duck) {
+      return {
+        action: "duck",
+        jump_now: 0.1,
+        duck_now: 0.9,
+        reason: "mid bird — duck (either)",
+        chain_active: false,
+      };
+    }
+    return {
+      action: "run",
+      jump_now: 0.05,
+      duck_now: 0.05,
+      reason: birdBlocks
+        ? "wait — overhead bird blocks jump"
+        : "wait for mid-bird window",
+      chain_active: Boolean(next.chain_with_next),
+    };
+  }
+
+  // --- Grounded: jump cacti / low birds (late window) ---
+  if (clearBirdBlocksJump(state.upcoming)) {
+    return {
+      action: "run",
+      jump_now: 0.05,
+      duck_now: 0.05,
+      reason: "wait — overhead bird blocks jump",
+      chain_active: Boolean(next.chain_with_next),
+    };
+  }
   const jump = inJumpWindow(next.time_to_impact, next.width, state.speed);
   return {
     action: jump ? "jump" : "run",
@@ -276,7 +374,7 @@ export function planAction(state: DecideState): {
     duck_now: 0.05,
     reason: jump
       ? next.chain_with_next
-        ? "jump (chain setup)"
+        ? "jump (tight chain setup)"
         : "jump"
       : "wait for jump window",
     chain_active: Boolean(next.chain_with_next),
@@ -297,22 +395,31 @@ export function enrichUpcoming(
 ): UpcomingObstacle[] {
   return raw.map((o, i) => {
     const following = raw[i + 1];
-    const gap_to_next_s = following
-      ? Math.max(0, following.time_to_impact - o.time_to_impact)
-      : 0;
-    const followNeedsJump =
-      following != null && following.clearance !== "duck";
-    // Tight if follow-up arrives before we'd finish a full jump arc + tiny react.
-    const chain_with_next =
-      followNeedsJump &&
-      gap_to_next_s > 0 &&
-      gap_to_next_s < JUMP_AIRTIME_S + 0.08;
+    // Gap to the next obstacle that actually needs a jump response.
+    let gap_to_next_s = 0;
+    let chain_with_next = false;
+    for (let j = i + 1; j < raw.length; j++) {
+      const f = raw[j]!;
+      if (!needsJump(f.clearance)) continue;
+      gap_to_next_s = Math.max(0, f.time_to_impact - o.time_to_impact);
+      // Only mark chain when THIS obstacle also needs a jump AND the gap is
+      // tighter than a full natural airtime (wider gaps: land normally).
+      chain_with_next =
+        needsJump(o.clearance) &&
+        gap_to_next_s > 0 &&
+        gap_to_next_s < CHAIN_GAP_S;
+      break;
+    }
+    // Still record gap to immediate next for Jev context (even if clear).
+    if (following && gap_to_next_s === 0 && !chain_with_next) {
+      gap_to_next_s = Math.max(0, following.time_to_impact - o.time_to_impact);
+    }
     return { ...o, gap_to_next_s, chain_with_next };
   });
 }
 
 export function buildTactics(state: Omit<DecideState, "tactics">): DecideState["tactics"] {
-  const next = state.upcoming[0];
+  const next = nextActionable(state.upcoming);
   const plan = planAction({
     ...state,
     tactics: {

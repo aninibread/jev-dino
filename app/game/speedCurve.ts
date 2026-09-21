@@ -77,15 +77,15 @@ export function obstacleWeights(elapsedMs: number, speed: number): {
   return { small: 0.2, large: 0.35, bird: 0.45 };
 }
 
-/** Prefer low (must-duck) birds more often as the race goes on. */
+/** Prefer a mix of bird heights; comments match Chromium yPos [100, 75, 50]. */
 export function birdHeightIndex(elapsedMs: number, optionCount: number): number {
   const t = Math.min(elapsedMs / 60_000, 1);
-  // options typically [100 low, 75 mid, 50 high]
+  // options: [100 low→jump, 75 mid→either, 50 high→clear]
   const roll = Math.random();
   if (optionCount >= 3) {
-    if (roll < 0.25 + t * 0.35) return 0; // low — duck
-    if (roll < 0.65) return 1; // mid
-    return 2; // high — jump
+    if (roll < 0.3 + t * 0.2) return 0; // low — must jump
+    if (roll < 0.7) return 1; // mid — jump or duck
+    return 2; // high — run underneath
   }
   return Math.floor(Math.random() * optionCount);
 }

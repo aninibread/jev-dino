@@ -4,6 +4,7 @@ import {
   heuristicDecide,
   jumpEarliestSeconds,
   jumpLeadSeconds,
+  nextActionable,
   pickAction,
   type DecideResponse,
   type DecideState,
@@ -72,8 +73,15 @@ export async function decideWithJev(
   signal?: AbortSignal,
 ): Promise<DecideResponse> {
   const start = performance.now();
-  const next = state.upcoming[0];
-  const second = state.upcoming[1];
+  const next = nextActionable(state.upcoming);
+  const window = state.upcoming.slice(0, 6).map((o) => ({
+    type: o.type,
+    clearance: o.clearance,
+    time_to_impact_seconds: Number(o.time_to_impact.toFixed(3)),
+    gap_to_next_seconds: Number(o.gap_to_next_s.toFixed(3)),
+    chain_with_next: o.chain_with_next,
+    y: o.y,
+  }));
   const result = await ai.run(
     "typesafe/jev",
     {
@@ -81,20 +89,21 @@ export async function decideWithJev(
         ...state,
         decision_hint: next
           ? {
-              nearest: next.type,
-              clearance: next.clearance,
-              time_to_impact_seconds: Number(next.time_to_impact.toFixed(3)),
-              gap_to_next_seconds: Number(next.gap_to_next_s.toFixed(3)),
-              chain_with_next: next.chain_with_next,
-              follow_up: second
-                ? {
-                    type: second.type,
-                    clearance: second.clearance,
-                    time_to_impact_seconds: Number(
-                      second.time_to_impact.toFixed(3),
-                    ),
-                  }
-                : null,
+              nearest_actionable: {
+                type: next.type,
+                clearance: next.clearance,
+                time_to_impact_seconds: Number(next.time_to_impact.toFixed(3)),
+                gap_to_next_seconds: Number(next.gap_to_next_s.toFixed(3)),
+                chain_with_next: next.chain_with_next,
+              },
+              /** Every obstacle in the current lookahead window (nearest first). */
+              obstacles_in_window: window,
+              clearance_guide: {
+                jump: "Must jump (cactus or low bird).",
+                duck: "Must duck and hold through the pass.",
+                either: "Jump or duck both work — prefer jump.",
+                clear: "High bird — run; no jump/duck needed.",
+              },
               jump_lead_seconds: Number(
                 jumpLeadSeconds(next.width, state.speed).toFixed(3),
               ),
@@ -111,26 +120,33 @@ export async function decideWithJev(
               tactics_recommended: state.tactics.recommended,
               tactics_reason: state.tactics.reason,
               chain_active: state.tactics.chain_active,
+              chain_note:
+                "chain_with_next is ONLY true when the next jumpable is closer than ~0.5s — do not speed-drop for comfortable gaps.",
             }
-          : null,
+          : {
+              nearest_actionable: null,
+              obstacles_in_window: window,
+              tactics_recommended: "run",
+              tactics_reason: "no actionable hazard",
+            },
       },
       questions: {
         jump_now: {
           type: "noul",
           instructions:
-            "Should the dinosaur JUMP RIGHT NOW? Prefer decision_hint.tactics_recommended when present. Jump only if grounded and time_to_impact_seconds is in the LATE window (roughly 0 < tti <= jump_lead_seconds). Never jump early (tti near jump_earliest_seconds) — airtime is ~jump_airtime_seconds and early jumps land on cacti. If clearance is duck, return near 0. If airborne, return near 0 (cannot jump). If chain_with_next is true, still jump in the late window for the nearest cactus — the browser will speed-drop after.",
+            "Should the dinosaur JUMP RIGHT NOW? Prefer decision_hint.tactics_recommended. Jump only if grounded and nearest_actionable clearance is jump/either and tti is in the LATE window (0 < tti <= jump_lead_seconds). Never jump early. If clearance is duck or clear, return near 0. If airborne, return near 0. Use obstacles_in_window to see what comes after — only set up a chain when chain_with_next is true on the current jumpable.",
           criteria: {
-            true: "Grounded and inside the late jump window — jump now.",
-            false: "Too early, airborne, must duck, or not a jump hazard.",
+            true: "Grounded and inside the late jump window for a jump/either hazard.",
+            false: "Too early, airborne, must duck, clear overhead bird, or not a jump hazard.",
           },
         },
         duck_now: {
           type: "noul",
           instructions:
-            "Should the dinosaur DUCK or SPEED-DROP RIGHT NOW? Two valid cases: (1) Grounded + clearance duck + tti within duck_lead_seconds BEFORE impact through a short NEGATIVE tti AFTER impact (hold crouch until the bird fully passes — standing early hits it). (2) Airborne chaining: ascending is false, and either tactics_reason mentions speed-drop / chain, or chain_with_next with tti small, or nearest jumpable is 0.2–0.65s away while still airborne → duck to slam down (speed-drop) so the next jump can happen sooner. Otherwise near 0. Prefer decision_hint.tactics_recommended === duck.",
+            "Should the dinosaur DUCK or SPEED-DROP RIGHT NOW? Valid cases: (1) Grounded + clearance duck — duck and HOLD through negative tti until the bird passes. (2) Grounded + clearance either — duck is optional vs jump. (3) Airborne speed-drop ONLY when chain_active / chain_with_next is true or tactics_reason mentions speed-drop for a tight gap — never slam every consecutive obstacle. Clearance clear → near 0. Prefer tactics_recommended.",
           criteria: {
-            true: "Duck under a bird and KEEP ducking through the pass, OR mid-air speed-drop to chain the next jump.",
-            false: "Do not duck or speed-drop.",
+            true: "Duck under a must-duck bird (hold through pass), OR mid-air speed-drop for a TIGHT chain only.",
+            false: "Do not duck or speed-drop (including clear overhead birds and comfortable gaps).",
           },
         },
       },

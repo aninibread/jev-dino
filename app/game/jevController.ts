@@ -2,6 +2,7 @@ import {
   inDuckWindow,
   inJumpWindow,
   jumpLeadSeconds,
+  nextActionable,
   pickAction,
   planAction,
   shouldSpeedDrop,
@@ -76,7 +77,7 @@ export class JevController {
   private executeTiming() {
     const state = this.options.getState();
     if (!state) return;
-    const next = state.upcoming[0];
+    const next = nextActionable(state.upcoming);
     if (!next) {
       if (this.lastAction !== "run") this.emitAction("run", 0, 0, "heuristic");
       return;
@@ -128,6 +129,12 @@ export class JevController {
     } else if (state.dino.grounded) {
       if (jump >= 0.45 && inJumpWindow(tti, next.width, state.speed)) {
         action = "jump";
+      } else if (
+        next.clearance === "either" &&
+        duck >= 0.45 &&
+        inDuckWindow(tti, next.width, state.speed)
+      ) {
+        action = "duck";
       }
     }
 
@@ -172,7 +179,7 @@ export class JevController {
     const state = this.options.getState();
     if (!state) return;
 
-    const next = state.upcoming[0];
+    const next = nextActionable(state.upcoming);
     // Ask earlier when a chain is coming — need belief before the first jump.
     const askHorizon = state.tactics.chain_active ? 1.6 : 1.35;
     if (!next || next.time_to_impact > askHorizon || next.time_to_impact < 0) {

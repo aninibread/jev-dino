@@ -236,7 +236,7 @@ export class ObstacleManager {
   }
 
   /** Snapshot for Jev — relative to a dino at TREX.START_X. */
-  upcomingFor(dinoX: number, limit = 3) {
+  upcomingFor(dinoX: number, limit = 6) {
     return this.obstacles
       .filter((o) => o.xPos + o.width > dinoX)
       .slice(0, limit)

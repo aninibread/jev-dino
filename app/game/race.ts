@@ -16,8 +16,11 @@ import { stepSpeed } from "./speedCurve";
 import type { DecideResponse, JevAction } from "../lib/jev-contract";
 import {
   buildTactics,
+  clearanceFor,
   enrichUpcoming,
   estimateLandingSeconds,
+  LOOKAHEAD_COUNT,
+  LOOKAHEAD_S,
 } from "../lib/jev-contract";
 
 export type RacePhase = "idle" | "playing" | "spectating" | "ended";
@@ -258,19 +261,17 @@ export class RaceGame {
   private buildJevState() {
     if (!this.live || this.jev.crashed) return null;
     const px_per_sec = Math.max(this.speed, 0.1) * 60;
-    const raw = this.obstacles.upcomingFor(TREX.START_X).map((o) => {
-      const clearance =
-        o.type === "bird" && o.y < 85
-          ? ("duck" as const)
-          : o.type === "bird"
-            ? ("either" as const)
-            : ("jump" as const);
-      return {
-        ...o,
-        time_to_impact: o.dx / px_per_sec,
-        clearance,
-      };
-    });
+    const raw = this.obstacles
+      .upcomingFor(TREX.START_X, LOOKAHEAD_COUNT)
+      .map((o) => {
+        const time_to_impact = o.dx / px_per_sec;
+        return {
+          ...o,
+          time_to_impact,
+          clearance: clearanceFor(o.type, o.y),
+        };
+      })
+      .filter((o) => o.time_to_impact < LOOKAHEAD_S);
     const upcoming = enrichUpcoming(raw);
     const est_landing_s = this.jev.grounded
       ? 0
