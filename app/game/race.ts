@@ -176,6 +176,10 @@ export class RaceGame {
   }
 
   pressDuck(down: boolean) {
+    if (this.phase === "idle" || this.phase === "ended") {
+      if (down) this.start();
+      return;
+    }
     if (this.phase !== "playing") return;
     this.duckHeld = down;
     this.you.setDuck(down);

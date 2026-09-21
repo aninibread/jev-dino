@@ -317,8 +317,8 @@ a:focus-visible {
     display: grid;
   }
 
-  /* Mobile: Race again lives in touch row when the race ends. */
-  .phase-ended .race-actions {
+  /* Mobile uses Jump/Duck (idle) or Race again (ended) — no separate CTA. */
+  .race-actions {
     display: none;
   }
 
