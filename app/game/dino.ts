@@ -35,7 +35,10 @@ export class Dino {
   animFrames: readonly number[] = TREX_FRAMES.WAITING.frames;
   minJumpHeight = 0;
   label: string;
+  /** Fill used to recolor the sprite (null = original grey). */
   tint: string | null;
+  private tintCanvas: HTMLCanvasElement | null = null;
+  private tintCtx: CanvasRenderingContext2D | null = null;
 
   constructor(label: string, tint: string | null = null) {
     this.label = label;
@@ -221,28 +224,89 @@ export class Dino {
     const sourceY = SPRITE_LDPI.TREX.y;
     const drawY = laneOffsetY + this.yPos;
 
-    ctx.save();
     if (this.tint) {
-      ctx.filter = this.tint;
+      this.drawTinted(
+        ctx,
+        sprite,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        this.xPos,
+        drawY,
+      );
+    } else {
+      ctx.drawImage(
+        sprite,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        this.xPos,
+        drawY,
+        sourceWidth,
+        sourceHeight,
+      );
     }
-    ctx.drawImage(
+
+    ctx.save();
+    ctx.fillStyle = this.tint ?? "#535353";
+    ctx.font = "600 10px Arial, Helvetica, sans-serif";
+    ctx.fillText(this.label, this.xPos, laneOffsetY + this.yPos - 6);
+    ctx.restore();
+  }
+
+  /** Multiply-tint the sprite so Jev reads as a different color, shading kept. */
+  private drawTinted(
+    ctx: CanvasRenderingContext2D,
+    sprite: HTMLImageElement,
+    sourceX: number,
+    sourceY: number,
+    sourceWidth: number,
+    sourceHeight: number,
+    destX: number,
+    destY: number,
+  ) {
+    if (!this.tintCanvas || !this.tintCtx) {
+      this.tintCanvas = document.createElement("canvas");
+      this.tintCtx = this.tintCanvas.getContext("2d");
+    }
+    const tctx = this.tintCtx;
+    if (!tctx || !this.tint) {
+      ctx.drawImage(
+        sprite,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        destX,
+        destY,
+        sourceWidth,
+        sourceHeight,
+      );
+      return;
+    }
+
+    this.tintCanvas.width = sourceWidth;
+    this.tintCanvas.height = sourceHeight;
+    tctx.clearRect(0, 0, sourceWidth, sourceHeight);
+    tctx.globalCompositeOperation = "source-over";
+    tctx.drawImage(
       sprite,
       sourceX,
       sourceY,
       sourceWidth,
       sourceHeight,
-      this.xPos,
-      drawY,
+      0,
+      0,
       sourceWidth,
       sourceHeight,
     );
-    ctx.restore();
-
-    ctx.save();
-    ctx.fillStyle = "#535353";
-    ctx.font = "600 10px Arial, Helvetica, sans-serif";
-    ctx.fillText(this.label, this.xPos, laneOffsetY + this.yPos - 6);
-    ctx.restore();
+    tctx.globalCompositeOperation = "source-in";
+    tctx.fillStyle = this.tint;
+    tctx.fillRect(0, 0, sourceWidth, sourceHeight);
+    tctx.globalCompositeOperation = "source-over";
+    ctx.drawImage(this.tintCanvas, destX, destY);
   }
 
   get grounded() {

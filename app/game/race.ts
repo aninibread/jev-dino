@@ -78,7 +78,7 @@ export class RaceGame {
     this.sprite = sprite;
     this.callbacks = callbacks;
     this.you = new Dino("YOU");
-    this.jev = new Dino("JEV", "sepia(0.35) hue-rotate(160deg) saturate(1.4)");
+    this.jev = new Dino("JEV", "#2f8f8c");
     this.jevController = new JevController({
       getState: () => this.buildJevState(),
       onDecision: (decision) => {
