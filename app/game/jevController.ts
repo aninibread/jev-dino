@@ -84,25 +84,34 @@ export class JevController {
     const jumpLead = jumpLeadSeconds(next.width, state.speed);
     const duckLead = duckLeadSeconds(state.speed);
     const tti = next.time_to_impact;
+    const local = heuristicDecide(state);
     const hasBelief = this.jumpBelief > 0.05 || this.duckBelief > 0.05;
 
+    // Jev endorses the hazard; local physics picks the exact frame.
+    // Weak Jev "yes" (~0.3) still counts — raw noul scores are often soft.
     let jump = this.jumpBelief;
     let duck = this.duckBelief;
     let source: DecideResponse["source"] = this.lastDecision?.source ?? "jev";
 
-    // Imminent hazard + no/weak Jev answer yet → don't die waiting on the network.
-    if (!hasBelief || (this.inflight !== null && tti <= jumpLead + 0.08)) {
-      const local = heuristicDecide(state);
-      jump = Math.max(jump, local.jump_now);
-      duck = Math.max(duck, local.duck_now);
-      if (!hasBelief) source = "heuristic";
+    if (!hasBelief) {
+      jump = local.jump_now;
+      duck = local.duck_now;
+      source = "heuristic";
+    } else {
+      if (this.jumpBelief >= 0.28) jump = Math.max(jump, local.jump_now);
+      if (this.duckBelief >= 0.28) duck = Math.max(duck, local.duck_now);
+      // Imminent + in-flight request: don't wait to die.
+      if (this.inflight && tti <= jumpLead + 0.05) {
+        jump = Math.max(jump, local.jump_now);
+        duck = Math.max(duck, local.duck_now);
+      }
     }
 
     let action: JevAction = "run";
     if (next.clearance === "duck") {
-      if (duck >= 0.5 && tti <= duckLead + 0.15 && tti > -0.02) action = "duck";
+      if (duck >= 0.45 && tti <= duckLead + 0.15 && tti > -0.02) action = "duck";
     } else if (state.dino.grounded) {
-      if (jump >= 0.5 && tti <= jumpLead && tti > 0.02) action = "jump";
+      if (jump >= 0.45 && tti <= jumpLead && tti > 0.02) action = "jump";
     }
 
     this.emitAction(action, jump, duck, source);
