@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { RaceGame, type RaceSnapshot, type Winner } from "./race";
 
+function winnerCopy(winner: Winner) {
+  if (winner === "you") return "You win";
+  if (winner === "jev") return "Jev wins";
+  if (winner === "tie") return "Tie";
+  return "";
+}
+
 export function RaceCanvas({
   onWinnerChange,
 }: {
@@ -92,13 +99,16 @@ export function RaceCanvas({
 
       <div className="touch-controls" aria-label="Touch controls">
         {phase === "ended" ? (
-          <button
-            type="button"
-            className="touch-btn touch-again"
-            onPointerDown={onRaceAgain}
-          >
-            Race again
-          </button>
+          <div className="touch-ended">
+            <p className="touch-result">{winnerCopy(snapshot?.winner ?? null)}</p>
+            <button
+              type="button"
+              className="touch-btn touch-again"
+              onPointerDown={onRaceAgain}
+            >
+              Race again
+            </button>
+          </div>
         ) : (
           <>
             <button

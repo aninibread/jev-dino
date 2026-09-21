@@ -6,7 +6,7 @@ import {
   type Box,
   type ObstacleTypeConfig,
 } from "./constants";
-import { gapShrink, maxObstacleSize } from "./speedCurve";
+import { maxObstacleSize, minGapPixels } from "./speedCurve";
 
 function rand(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -58,11 +58,14 @@ export class Obstacle {
         Math.random() > 0.5 ? typeConfig.speedOffset : -typeConfig.speedOffset;
     }
 
-    const shrink = gapShrink(elapsedMs);
-    const minGap = Math.round(
-      this.width * speed + typeConfig.minGap * gapCoefficient * shrink,
+    const minGap = minGapPixels(
+      this.width,
+      speed,
+      gapCoefficient,
+      elapsedMs,
+      typeConfig.minGap,
     );
-    const maxGap = Math.round(minGap * 1.5);
+    const maxGap = Math.round(minGap * 1.45);
     this.gap = rand(minGap, maxGap);
   }
 

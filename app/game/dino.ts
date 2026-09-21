@@ -95,10 +95,13 @@ export class Dino {
     }
   }
 
-  /** Immediately cancel jump and slam down (Chromium setSpeedDrop). */
+  /** Immediately cancel jump and slam down — no hover / slow-fall before crouch. */
   setSpeedDrop() {
     this.speedDrop = true;
-    this.jumpVelocity = 1;
+    // Chromium uses 1; that feels like a pause mid-air. Push harder so the
+    // body drops in a few frames, then crouch on land.
+    this.jumpVelocity = 8;
+    this.reachedMinHeight = true;
   }
 
   setDuck(isDucking: boolean) {
@@ -146,21 +149,17 @@ export class Dino {
     const framesElapsed = deltaTime / (1000 / 60);
 
     if (this.speedDrop) {
+      // Fall only — never re-apply endJump/-5 which can fight the slam.
       this.yPos += Math.round(
         this.jumpVelocity * SPEED_DROP_COEFFICIENT * framesElapsed,
       );
+      this.jumpVelocity += GRAVITY * 1.5 * framesElapsed;
     } else {
       this.yPos += Math.round(this.jumpVelocity * framesElapsed);
-    }
-
-    this.jumpVelocity += GRAVITY * framesElapsed;
-
-    if (this.yPos < this.minJumpHeight || this.speedDrop) {
-      this.reachedMinHeight = true;
-    }
-
-    if (this.speedDrop) {
-      this.endJump();
+      this.jumpVelocity += GRAVITY * framesElapsed;
+      if (this.yPos < this.minJumpHeight) {
+        this.reachedMinHeight = true;
+      }
     }
 
     if (this.yPos > this.groundYPos) {
@@ -168,7 +167,6 @@ export class Dino {
       this.jumping = false;
       this.jumpVelocity = 0;
       if (!this.crashed) {
-        // Duck pose applied via speedDrop→setDuck below or duckHeld re-apply.
         if (this.ducking) this.setStatus("DUCKING");
         else this.setStatus("RUNNING");
       }

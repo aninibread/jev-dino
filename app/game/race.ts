@@ -292,16 +292,16 @@ export class RaceGame {
     this.cloudsJev.update(deltaTime, this.speed);
 
     if (!this.you.crashed) {
-      this.you.update(deltaTime);
+      // Apply duck before physics so mid-air slam starts this frame.
       if (this.duckHeld) this.you.setDuck(true);
+      this.you.update(deltaTime);
       this.youDistance += this.speed * deltaTime * 0.1;
     }
     if (!this.jev.crashed) {
-      this.jev.update(deltaTime);
-      // Re-apply duck if last action was duck and still needed
-      if (this.jevController.action === "duck" && this.jev.grounded) {
+      if (this.jevController.action === "duck") {
         this.jev.setDuck(true);
       }
+      this.jev.update(deltaTime);
       this.jevDistance += this.speed * deltaTime * 0.1;
     }
 
