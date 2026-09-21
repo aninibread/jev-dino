@@ -379,19 +379,5 @@ export class RaceGame {
     // Divider
     this.ctx.fillStyle = "#e4e1db";
     this.ctx.fillRect(0, LANE_HEIGHT, DEFAULT_WIDTH, LANE_GAP);
-
-    if (this.phase === "idle") {
-      this.ctx.fillStyle = "rgba(247,247,247,0.72)";
-      this.ctx.fillRect(0, 0, DEFAULT_WIDTH, this.height);
-      this.ctx.fillStyle = "#191919";
-      this.ctx.font = "600 16px Arial, Helvetica, sans-serif";
-      this.ctx.textAlign = "center";
-      this.ctx.fillText(
-        "Tap or press space to race Jev",
-        DEFAULT_WIDTH / 2,
-        this.height / 2,
-      );
-      this.ctx.textAlign = "start";
-    }
   }
 }
