@@ -95,20 +95,19 @@ export async function decideWithJev(
         jump_now: {
           type: "noul",
           instructions:
-            "Should the dinosaur JUMP RIGHT NOW to survive? True only if clearance is jump or either, the dino is grounded, and time_to_impact_seconds is inside (or extremely close to) jump_lead_seconds — waiting longer will be too late. False if the hazard is still far, already passed, the dino is airborne, or a duck is required instead.",
+            "Decide if the dinosaur should JUMP RIGHT NOW. Use decision_hint. If grounded is true, clearance is jump or either, and time_to_impact_seconds <= jump_lead_seconds (and > 0), return a high probability (>= 0.8). If time_to_impact_seconds is still much larger than jump_lead_seconds, return low probability. If clearance is duck, return near 0.",
           criteria: {
-            true: "Jump this instant — cactus/low bird is in the jump window.",
-            false:
-              "Do not jump now — too early, too late, airborne, or duck instead.",
+            true: "Inside the jump window now — jump immediately.",
+            false: "Not a jump moment — too early, too late, airborne, or must duck.",
           },
         },
         duck_now: {
           type: "noul",
           instructions:
-            "Should the dinosaur DUCK RIGHT NOW? True only if clearance is duck (high bird) and time_to_impact_seconds is inside duck_lead_seconds. False for cacti, low birds, far hazards, or when jumping is correct.",
+            "Decide if the dinosaur should DUCK RIGHT NOW. Use decision_hint. If clearance is duck and time_to_impact_seconds <= duck_lead_seconds (and > 0), return high probability (>= 0.8). Otherwise return near 0.",
           criteria: {
-            true: "Duck this instant — a high bird is in the duck window.",
-            false: "Do not duck now.",
+            true: "High bird in the duck window — duck immediately.",
+            false: "Do not duck.",
           },
         },
       },
