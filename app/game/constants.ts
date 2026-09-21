@@ -8,7 +8,7 @@ export const GAME_DURATION_MS = 60_000;
 /** After the player crashes, keep Jev running this long so you can watch. */
 export const SPECTATE_MS = 30_000;
 
-/** Base Chromium-like speeds; our curve multiplies these aggressively. */
+/** Base Chromium speed; acceleration lives in speedCurve.ts. */
 export const BASE_SPEED = 6;
 export const GRAVITY = 0.6;
 export const INITIAL_JUMP_VELOCITY = 12;
@@ -112,7 +112,7 @@ export const OBSTACLE_TYPES: ObstacleTypeConfig[] = [
     height: 40,
     yPos: [100, 75, 50],
     multipleSpeed: 999,
-    minSpeed: 7,
+    minSpeed: 8.5,
     minGap: 150,
     collisionBoxes: [
       { x: 15, y: 15, width: 16, height: 5 },

@@ -6,7 +6,13 @@ import {
   type Box,
   type ObstacleTypeConfig,
 } from "./constants";
-import { maxObstacleSize, minGapPixels } from "./speedCurve";
+import {
+  birdHeightIndex,
+  chromiumGapPixels,
+  gapCoefficientFor,
+  maxObstacleSize,
+  obstacleWeights,
+} from "./speedCurve";
 
 function rand(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -33,13 +39,14 @@ export class Obstacle {
     xOffset = 0,
   ) {
     this.typeConfig = typeConfig;
-    this.size = rand(1, maxObstacleSize(elapsedMs, speed));
+    this.size = rand(1, maxObstacleSize(speed));
     if (this.size > 1 && typeConfig.multipleSpeed > speed) this.size = 1;
     this.width = typeConfig.width * this.size;
     this.xPos = DEFAULT_WIDTH + xOffset;
 
     if (Array.isArray(typeConfig.yPos)) {
-      this.yPos = typeConfig.yPos[rand(0, typeConfig.yPos.length - 1)]!;
+      const idx = birdHeightIndex(elapsedMs, typeConfig.yPos.length);
+      this.yPos = typeConfig.yPos[idx]!;
     } else {
       this.yPos = typeConfig.yPos;
     }
@@ -58,14 +65,12 @@ export class Obstacle {
         Math.random() > 0.5 ? typeConfig.speedOffset : -typeConfig.speedOffset;
     }
 
-    const minGap = minGapPixels(
+    const { minGap, maxGap } = chromiumGapPixels(
       this.width,
       speed,
       gapCoefficient,
-      elapsedMs,
       typeConfig.minGap,
     );
-    const maxGap = Math.round(minGap * 1.45);
     this.gap = rand(minGap, maxGap);
   }
 
@@ -133,14 +138,18 @@ export class Obstacle {
   }
 }
 
+/** Chromium MAX_OBSTACLE_DUPLICATION — avoid three identical types in a row. */
+const MAX_OBSTACLE_DUPLICATION = 2;
+
 export class ObstacleManager {
   obstacles: Obstacle[] = [];
-  gapCoefficient = 0.6;
   followingObstacleCreated = false;
+  private history: string[] = [];
 
   reset() {
     this.obstacles = [];
     this.followingObstacleCreated = false;
+    this.history = [];
   }
 
   update(deltaTime: number, speed: number, elapsedMs: number) {
@@ -165,23 +174,55 @@ export class ObstacleManager {
     }
   }
 
+  private duplicateCheck(type: string): boolean {
+    let dup = 0;
+    for (const prev of this.history) {
+      dup = prev === type ? dup + 1 : 0;
+    }
+    return dup >= MAX_OBSTACLE_DUPLICATION;
+  }
+
+  private pickType(speed: number, elapsedMs: number): ObstacleTypeConfig {
+    const weights = obstacleWeights(elapsedMs, speed);
+    const small = OBSTACLE_TYPES.find((t) => t.type === "CACTUS_SMALL")!;
+    const large = OBSTACLE_TYPES.find((t) => t.type === "CACTUS_LARGE")!;
+    const bird = OBSTACLE_TYPES.find((t) => t.type === "PTERODACTYL")!;
+
+    const options: { type: ObstacleTypeConfig; w: number }[] = [
+      { type: small, w: weights.small },
+      { type: large, w: weights.large },
+    ];
+    if (speed >= bird.minSpeed && weights.bird > 0) {
+      options.push({ type: bird, w: weights.bird });
+    }
+
+    // Retry a few times to avoid duplicate streaks (Chromium does the same).
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const total = options.reduce((s, o) => s + o.w, 0);
+      let roll = Math.random() * total;
+      let picked = options[0]!.type;
+      for (const opt of options) {
+        roll -= opt.w;
+        if (roll <= 0) {
+          picked = opt.type;
+          break;
+        }
+      }
+      if (!this.duplicateCheck(picked.type)) return picked;
+    }
+    return small;
+  }
+
   addNewObstacle(speed: number, elapsedMs: number) {
-    const candidates = OBSTACLE_TYPES.filter((t) => {
-      if (elapsedMs < 12_000 && t.type === "PTERODACTYL") return false;
-      return speed >= t.minSpeed;
-    });
-    const pool = candidates.length ? candidates : OBSTACLE_TYPES.slice(0, 2);
-    const type = pool[rand(0, pool.length - 1)]!;
-    // Prefer small cactus for the first few spawns.
-    const forced =
-      elapsedMs < 10_000 && Math.random() < 0.7
-        ? OBSTACLE_TYPES.find((t) => t.type === "CACTUS_SMALL")!
-        : type;
+    const type = this.pickType(speed, elapsedMs);
+    const coeff = gapCoefficientFor(elapsedMs);
     // Extra runway for the very first obstacle of a race.
     const xOffset = this.obstacles.length === 0 ? 280 : 0;
-    this.obstacles.push(
-      new Obstacle(forced, speed, this.gapCoefficient, elapsedMs, xOffset),
-    );
+    this.obstacles.push(new Obstacle(type, speed, coeff, elapsedMs, xOffset));
+    this.history.unshift(type.type);
+    if (this.history.length > MAX_OBSTACLE_DUPLICATION) {
+      this.history.length = MAX_OBSTACLE_DUPLICATION;
+    }
   }
 
   draw(

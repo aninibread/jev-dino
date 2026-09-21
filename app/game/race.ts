@@ -12,7 +12,7 @@ import { Dino } from "./dino";
 import { CloudField, HorizonLine } from "./horizon";
 import { JevController } from "./jevController";
 import { ObstacleManager } from "./obstacles";
-import { speedMultiplier } from "./speedCurve";
+import { stepSpeed } from "./speedCurve";
 import type { DecideResponse, JevAction } from "../lib/jev-contract";
 
 export type RacePhase = "idle" | "playing" | "spectating" | "ended";
@@ -299,7 +299,8 @@ export class RaceGame {
     this.elapsedMs += deltaTime;
     this.clearTimer += deltaTime;
     if (this.phase === "spectating") this.spectateElapsedMs += deltaTime;
-    this.speed = BASE_SPEED * speedMultiplier(this.elapsedMs);
+    // Chromium-style: nudge speed every frame toward MAX_SPEED.
+    this.speed = stepSpeed(this.speed, deltaTime);
 
     if (this.clearTimer > CLEAR_TIME_MS) {
       this.obstacles.update(deltaTime, this.speed, this.elapsedMs);
