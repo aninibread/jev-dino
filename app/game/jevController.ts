@@ -1,6 +1,7 @@
 import {
-  duckLeadSeconds,
   heuristicDecide,
+  inDuckWindow,
+  inJumpWindow,
   jumpLeadSeconds,
   pickAction,
   type DecideResponse,
@@ -16,8 +17,8 @@ export type JevControllerOptions = {
 
 /**
  * Jev answers "should I jump / duck for this hazard?" (noul probabilities).
- * The browser commits the actual jump/duck at the correct lead time so
- * 400–1200ms model latency cannot make Jev late every race.
+ * The browser commits the actual jump/duck inside a late window calibrated to
+ * jump airtime (~0.58s) so early jumps don't land on the obstacle.
  */
 export class JevController {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -82,12 +83,11 @@ export class JevController {
     }
 
     const jumpLead = jumpLeadSeconds(next.width, state.speed);
-    const duckLead = duckLeadSeconds(state.speed);
     const tti = next.time_to_impact;
     const local = heuristicDecide(state);
     const hasBelief = this.jumpBelief > 0.05 || this.duckBelief > 0.05;
 
-    // Jev endorses the hazard; local physics picks the exact frame.
+    // Jev endorses the hazard; local physics picks the exact late frame.
     // Weak Jev "yes" (~0.3) still counts — raw noul scores are often soft.
     let jump = this.jumpBelief;
     let duck = this.duckBelief;
@@ -109,9 +109,12 @@ export class JevController {
 
     let action: JevAction = "run";
     if (next.clearance === "duck") {
-      if (duck >= 0.45 && tti <= duckLead + 0.15 && tti > -0.02) action = "duck";
+      if (duck >= 0.45 && inDuckWindow(tti, state.speed)) action = "duck";
     } else if (state.dino.grounded) {
-      if (jump >= 0.45 && tti <= jumpLead && tti > 0.02) action = "jump";
+      // Late window only — calibrated to ~0.58s airtime / landing.
+      if (jump >= 0.45 && inJumpWindow(tti, next.width, state.speed)) {
+        action = "jump";
+      }
     }
 
     this.emitAction(action, jump, duck, source);
@@ -143,6 +146,7 @@ export class JevController {
     if (!state) return;
 
     const next = state.upcoming[0];
+    // Ask earlier than fire — model latency is hundreds of ms, fire stays late.
     if (!next || next.time_to_impact > 1.35 || next.time_to_impact < 0) return;
 
     const askKey = `${next.type}:${next.clearance}:${Math.round(next.dx / 30)}`;

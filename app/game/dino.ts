@@ -72,7 +72,7 @@ export class Dino {
   jump() {
     if (this.crashed || this.jumping) return;
     this.setStatus("JUMPING");
-    this.jumpVelocity = TREX.INITIAL_JUMP_VELOCITY - 1; // slight extra loft vs stock -10
+    this.jumpVelocity = TREX.INITIAL_JUMP_VELOCITY; // -10, airtime ~0.58s
     this.jumping = true;
     this.reachedMinHeight = false;
     this.speedDrop = false;

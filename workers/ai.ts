@@ -1,6 +1,8 @@
 import {
+  JUMP_AIRTIME_S,
   duckLeadSeconds,
   heuristicDecide,
+  jumpEarliestSeconds,
   jumpLeadSeconds,
   pickAction,
   type DecideResponse,
@@ -84,6 +86,10 @@ export async function decideWithJev(
               jump_lead_seconds: Number(
                 jumpLeadSeconds(next.width, state.speed).toFixed(3),
               ),
+              jump_earliest_seconds: Number(
+                jumpEarliestSeconds(next.width, state.speed).toFixed(3),
+              ),
+              jump_airtime_seconds: JUMP_AIRTIME_S,
               duck_lead_seconds: Number(
                 duckLeadSeconds(state.speed).toFixed(3),
               ),
@@ -95,10 +101,10 @@ export async function decideWithJev(
         jump_now: {
           type: "noul",
           instructions:
-            "Decide if the dinosaur should JUMP RIGHT NOW. Use decision_hint. If grounded is true, clearance is jump or either, and time_to_impact_seconds <= jump_lead_seconds (and > 0), return a high probability (>= 0.8). If time_to_impact_seconds is still much larger than jump_lead_seconds, return low probability. If clearance is duck, return near 0.",
+            "Decide if the dinosaur should JUMP RIGHT NOW. Jump airtime is ~jump_airtime_seconds — jumping too early lands on the obstacle after landing. Use decision_hint: if grounded, clearance is jump or either, and time_to_impact_seconds is BETWEEN 0 and jump_lead_seconds (late window; do NOT jump when time_to_impact is still near jump_earliest_seconds or larger), return high probability (>= 0.8). If still too early (time_to_impact >> jump_lead_seconds), return low. If clearance is duck, return near 0.",
           criteria: {
-            true: "Inside the jump window now — jump immediately.",
-            false: "Not a jump moment — too early, too late, airborne, or must duck.",
+            true: "Inside the late jump window now — jump immediately.",
+            false: "Not a jump moment — too early (would land on obstacle), too late, airborne, or must duck.",
           },
         },
         duck_now: {
