@@ -72,7 +72,7 @@ export class Dino {
   jump() {
     if (this.crashed || this.jumping) return;
     this.setStatus("JUMPING");
-    this.jumpVelocity = TREX.INITIAL_JUMP_VELOCITY;
+    this.jumpVelocity = TREX.INITIAL_JUMP_VELOCITY - 1; // slight extra loft vs stock -10
     this.jumping = true;
     this.reachedMinHeight = false;
     this.speedDrop = false;
@@ -156,7 +156,12 @@ export class Dino {
   }
 
   collides(obstacleBoxes: Box[]): boolean {
-    const mine = this.collisionBoxes();
+    const mine = this.collisionBoxes().map((box) => ({
+      x: box.x + 2,
+      y: box.y + 2,
+      width: Math.max(2, box.width - 4),
+      height: Math.max(2, box.height - 4),
+    }));
     for (const a of mine) {
       for (const b of obstacleBoxes) {
         if (boxesOverlap(a, b)) return true;

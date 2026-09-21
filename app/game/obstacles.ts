@@ -163,11 +163,19 @@ export class ObstacleManager {
   }
 
   addNewObstacle(speed: number, elapsedMs: number) {
-    const candidates = OBSTACLE_TYPES.filter((t) => speed >= t.minSpeed);
-    const type = candidates[rand(0, candidates.length - 1)]!;
-    // Avoid too many duplicate birds early
+    const candidates = OBSTACLE_TYPES.filter((t) => {
+      if (elapsedMs < 12_000 && t.type === "PTERODACTYL") return false;
+      return speed >= t.minSpeed;
+    });
+    const pool = candidates.length ? candidates : OBSTACLE_TYPES.slice(0, 2);
+    const type = pool[rand(0, pool.length - 1)]!;
+    // Prefer small cactus for the first few spawns.
+    const forced =
+      elapsedMs < 10_000 && Math.random() < 0.7
+        ? OBSTACLE_TYPES.find((t) => t.type === "CACTUS_SMALL")!
+        : type;
     this.obstacles.push(
-      new Obstacle(type, speed, this.gapCoefficient, elapsedMs),
+      new Obstacle(forced, speed, this.gapCoefficient, elapsedMs),
     );
   }
 
