@@ -1,9 +1,10 @@
 import {
-  heuristicDecide,
   inDuckWindow,
   inJumpWindow,
   jumpLeadSeconds,
   pickAction,
+  planAction,
+  shouldSpeedDrop,
   type DecideResponse,
   type DecideState,
   type JevAction,
@@ -16,9 +17,8 @@ export type JevControllerOptions = {
 };
 
 /**
- * Jev answers "should I jump / duck for this hazard?" (noul probabilities).
- * The browser commits the actual jump/duck inside a late window calibrated to
- * jump airtime (~0.58s) so early jumps don't land on the obstacle.
+ * Jev answers jump_now / duck_now (noul). Duck mid-air = speed-drop for chains.
+ * Local planAction() commits the exact frame, including jump→duck→jump.
  */
 export class JevController {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -34,7 +34,7 @@ export class JevController {
   running = false;
 
   constructor(options: JevControllerOptions) {
-    this.options = { intervalMs: 110, ...options };
+    this.options = { intervalMs: 90, ...options };
   }
 
   get action() {
@@ -84,11 +84,9 @@ export class JevController {
 
     const jumpLead = jumpLeadSeconds(next.width, state.speed);
     const tti = next.time_to_impact;
-    const local = heuristicDecide(state);
+    const local = planAction(state);
     const hasBelief = this.jumpBelief > 0.05 || this.duckBelief > 0.05;
 
-    // Jev endorses the hazard; local physics picks the exact late frame.
-    // Weak Jev "yes" (~0.3) still counts — raw noul scores are often soft.
     let jump = this.jumpBelief;
     let duck = this.duckBelief;
     let source: DecideResponse["source"] = this.lastDecision?.source ?? "jev";
@@ -98,9 +96,13 @@ export class JevController {
       duck = local.duck_now;
       source = "heuristic";
     } else {
+      // Soft nouls still blend; local planner wins on chains / physics.
       if (this.jumpBelief >= 0.28) jump = Math.max(jump, local.jump_now);
       if (this.duckBelief >= 0.28) duck = Math.max(duck, local.duck_now);
-      // Imminent + in-flight request: don't wait to die.
+      if (local.chain_active) {
+        jump = Math.max(jump, local.jump_now);
+        duck = Math.max(duck, local.duck_now);
+      }
       if (this.inflight && tti <= jumpLead + 0.05) {
         jump = Math.max(jump, local.jump_now);
         duck = Math.max(duck, local.duck_now);
@@ -108,13 +110,26 @@ export class JevController {
     }
 
     let action: JevAction = "run";
-    if (next.clearance === "duck") {
+
+    // Mid-air speed-drop for chaining (duck while airborne).
+    if (!state.dino.grounded && (duck >= 0.45 || local.action === "duck")) {
+      if (shouldSpeedDrop(state) || local.action === "duck") {
+        action = "duck";
+      }
+    } else if (next.clearance === "duck") {
       if (duck >= 0.45 && inDuckWindow(tti, state.speed)) action = "duck";
     } else if (state.dino.grounded) {
-      // Late window only — calibrated to ~0.58s airtime / landing.
       if (jump >= 0.45 && inJumpWindow(tti, next.width, state.speed)) {
         action = "jump";
       }
+    }
+
+    // Prefer local plan when it says chain speed-drop / jump in window.
+    if (local.action !== "run" && (local.chain_active || !hasBelief)) {
+      action = local.action;
+      jump = Math.max(jump, local.jump_now);
+      duck = Math.max(duck, local.duck_now);
+      source = hasBelief ? source : "heuristic";
     }
 
     this.emitAction(action, jump, duck, source);
@@ -146,10 +161,13 @@ export class JevController {
     if (!state) return;
 
     const next = state.upcoming[0];
-    // Ask earlier than fire — model latency is hundreds of ms, fire stays late.
-    if (!next || next.time_to_impact > 1.35 || next.time_to_impact < 0) return;
+    // Ask earlier when a chain is coming — need belief before the first jump.
+    const askHorizon = state.tactics.chain_active ? 1.6 : 1.35;
+    if (!next || next.time_to_impact > askHorizon || next.time_to_impact < 0) {
+      return;
+    }
 
-    const askKey = `${next.type}:${next.clearance}:${Math.round(next.dx / 30)}`;
+    const askKey = `${next.type}:${next.clearance}:${next.chain_with_next ? "c" : "n"}:${Math.round(next.dx / 25)}`;
     if (this.inflight && askKey === this.lastAskKey) return;
 
     this.lastAskKey = askKey;
@@ -190,10 +208,9 @@ export class JevController {
         duck_now: this.duckBelief,
         action: pickAction(this.jumpBelief, this.duckBelief),
       };
-      // Surface that a live Jev answer arrived (HUD source badge).
       this.options.onDecision(this.lastDecision);
     } catch {
-      /* timing loop covers gaps */
+      /* local planner covers gaps */
     } finally {
       if (this.inflight === controller) this.inflight = null;
     }

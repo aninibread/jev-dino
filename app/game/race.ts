@@ -14,6 +14,11 @@ import { JevController } from "./jevController";
 import { ObstacleManager } from "./obstacles";
 import { stepSpeed } from "./speedCurve";
 import type { DecideResponse, JevAction } from "../lib/jev-contract";
+import {
+  buildTactics,
+  enrichUpcoming,
+  estimateLandingSeconds,
+} from "../lib/jev-contract";
 
 export type RacePhase = "idle" | "playing" | "spectating" | "ended";
 export type Winner = "you" | "jev" | "tie" | null;
@@ -253,7 +258,7 @@ export class RaceGame {
   private buildJevState() {
     if (!this.live || this.jev.crashed) return null;
     const px_per_sec = Math.max(this.speed, 0.1) * 60;
-    const upcoming = this.obstacles.upcomingFor(TREX.START_X).map((o) => {
+    const raw = this.obstacles.upcomingFor(TREX.START_X).map((o) => {
       const clearance =
         o.type === "bird" && o.y < 85
           ? ("duck" as const)
@@ -266,7 +271,15 @@ export class RaceGame {
         clearance,
       };
     });
-    return {
+    const upcoming = enrichUpcoming(raw);
+    const est_landing_s = this.jev.grounded
+      ? 0
+      : estimateLandingSeconds(
+          this.jev.yPos,
+          this.jev.jumpVelocity,
+          this.jev.groundYPos,
+        );
+    const partial = {
       t: this.elapsedMs / 1000,
       speed: this.speed,
       px_per_sec,
@@ -275,8 +288,14 @@ export class RaceGame {
         vy: this.jev.jumpVelocity,
         ducking: this.jev.ducking,
         grounded: this.jev.grounded,
+        ascending: this.jev.jumping && this.jev.jumpVelocity < 0,
+        est_landing_s: Number(est_landing_s.toFixed(3)),
       },
       upcoming,
+    };
+    return {
+      ...partial,
+      tactics: buildTactics(partial),
     };
   }
 

@@ -73,6 +73,7 @@ export async function decideWithJev(
 ): Promise<DecideResponse> {
   const start = performance.now();
   const next = state.upcoming[0];
+  const second = state.upcoming[1];
   const result = await ai.run(
     "typesafe/jev",
     {
@@ -83,6 +84,17 @@ export async function decideWithJev(
               nearest: next.type,
               clearance: next.clearance,
               time_to_impact_seconds: Number(next.time_to_impact.toFixed(3)),
+              gap_to_next_seconds: Number(next.gap_to_next_s.toFixed(3)),
+              chain_with_next: next.chain_with_next,
+              follow_up: second
+                ? {
+                    type: second.type,
+                    clearance: second.clearance,
+                    time_to_impact_seconds: Number(
+                      second.time_to_impact.toFixed(3),
+                    ),
+                  }
+                : null,
               jump_lead_seconds: Number(
                 jumpLeadSeconds(next.width, state.speed).toFixed(3),
               ),
@@ -94,6 +106,11 @@ export async function decideWithJev(
                 duckLeadSeconds(state.speed).toFixed(3),
               ),
               grounded: state.dino.grounded,
+              ascending: state.dino.ascending,
+              est_landing_seconds: state.dino.est_landing_s,
+              tactics_recommended: state.tactics.recommended,
+              tactics_reason: state.tactics.reason,
+              chain_active: state.tactics.chain_active,
             }
           : null,
       },
@@ -101,19 +118,19 @@ export async function decideWithJev(
         jump_now: {
           type: "noul",
           instructions:
-            "Decide if the dinosaur should JUMP RIGHT NOW. Jump airtime is ~jump_airtime_seconds — jumping too early lands on the obstacle after landing. Use decision_hint: if grounded, clearance is jump or either, and time_to_impact_seconds is BETWEEN 0 and jump_lead_seconds (late window; do NOT jump when time_to_impact is still near jump_earliest_seconds or larger), return high probability (>= 0.8). If still too early (time_to_impact >> jump_lead_seconds), return low. If clearance is duck, return near 0.",
+            "Should the dinosaur JUMP RIGHT NOW? Prefer decision_hint.tactics_recommended when present. Jump only if grounded and time_to_impact_seconds is in the LATE window (roughly 0 < tti <= jump_lead_seconds). Never jump early (tti near jump_earliest_seconds) — airtime is ~jump_airtime_seconds and early jumps land on cacti. If clearance is duck, return near 0. If airborne, return near 0 (cannot jump). If chain_with_next is true, still jump in the late window for the nearest cactus — the browser will speed-drop after.",
           criteria: {
-            true: "Inside the late jump window now — jump immediately.",
-            false: "Not a jump moment — too early (would land on obstacle), too late, airborne, or must duck.",
+            true: "Grounded and inside the late jump window — jump now.",
+            false: "Too early, airborne, must duck, or not a jump hazard.",
           },
         },
         duck_now: {
           type: "noul",
           instructions:
-            "Decide if the dinosaur should DUCK RIGHT NOW. Use decision_hint. If clearance is duck and time_to_impact_seconds <= duck_lead_seconds (and > 0), return high probability (>= 0.8). Otherwise return near 0.",
+            "Should the dinosaur DUCK or SPEED-DROP RIGHT NOW? Two valid cases: (1) Grounded + clearance duck + tti in duck window → duck under a low bird. (2) Airborne chaining: ascending is false, and either tactics_reason mentions speed-drop / chain, or chain_with_next with tti small, or nearest jumpable is 0.2–0.65s away while still airborne → duck to slam down (speed-drop) so the next jump can happen sooner. Otherwise near 0. Prefer decision_hint.tactics_recommended === duck.",
           criteria: {
-            true: "High bird in the duck window — duck immediately.",
-            false: "Do not duck.",
+            true: "Duck for a bird, OR mid-air speed-drop to chain the next jump.",
+            false: "Do not duck or speed-drop.",
           },
         },
       },
