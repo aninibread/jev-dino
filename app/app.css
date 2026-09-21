@@ -326,17 +326,19 @@ a:focus-visible {
   }
 
   .site-footer {
-    padding-bottom: max(18px, env(safe-area-inset-bottom));
+    /* Leave room for the thumb-zone controls pinned below. */
+    padding-top: 20px;
+    padding-bottom: calc(112px + env(safe-area-inset-bottom));
   }
 
   .page {
     width: min(100% - 28px, 640px);
-    padding-top: 28px;
-    padding-bottom: 24px;
+    padding-top: 20px;
+    padding-bottom: calc(100px + env(safe-area-inset-bottom));
   }
 
   .intro {
-    margin-bottom: 18px;
+    margin-bottom: 14px;
   }
 
   .intro h1 {
@@ -345,6 +347,25 @@ a:focus-visible {
 
   .touch-controls {
     display: grid;
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 0;
+    z-index: 30;
+    width: min(100% - 28px, 600px);
+    gap: 10px;
+    /* Rest where thumbs sit for typing — above the home indicator. */
+    padding: 16px 0 max(22px, env(safe-area-inset-bottom));
+    background: linear-gradient(
+      to top,
+      var(--paper) 0%,
+      var(--paper) 62%,
+      transparent 100%
+    );
+  }
+
+  .touch-btn {
+    min-height: 58px;
   }
 
   /* Mobile uses Jump/Duck (idle/play) or ended/spectate panels — no separate CTA. */
