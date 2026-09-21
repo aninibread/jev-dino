@@ -70,8 +70,8 @@ function Rules() {
 }
 
 function titleFor(winner: Winner) {
-  if (winner === "you") return "You win";
-  if (winner === "jev") return "Jev wins";
+  if (winner === "you") return "🥇 You win";
+  if (winner === "jev") return "🥈 Jev wins";
   if (winner === "tie") return "Tie";
   return "Race Jev";
 }
