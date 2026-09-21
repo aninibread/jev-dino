@@ -78,8 +78,7 @@ export class RaceGame {
     this.sprite = sprite;
     this.callbacks = callbacks;
     this.you = new Dino("YOU");
-    // Slightly light teal — multiplies cleanly over the grey sprite.
-    this.jev = new Dino("JEV", "#5ec4c0");
+    this.jev = new Dino("JEV", "#3cae6a");
     this.jevController = new JevController({
       getState: () => this.buildJevState(),
       onDecision: (decision) => {

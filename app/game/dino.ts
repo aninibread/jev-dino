@@ -256,7 +256,7 @@ export class Dino {
     ctx.restore();
   }
 
-  /** Colorize the sprite while keeping original pixel shading. */
+  /** Fill the dino body with tint; keep the same sprite silhouette. */
   private drawTinted(
     ctx: CanvasRenderingContext2D,
     sprite: HTMLImageElement,
@@ -290,7 +290,6 @@ export class Dino {
     this.tintCanvas.width = sourceWidth;
     this.tintCanvas.height = sourceHeight;
     tctx.clearRect(0, 0, sourceWidth, sourceHeight);
-    // Base sprite (greyscale pixels + alpha)
     tctx.globalCompositeOperation = "source-over";
     tctx.drawImage(
       sprite,
@@ -303,23 +302,10 @@ export class Dino {
       sourceWidth,
       sourceHeight,
     );
-    // Multiply color through existing shading
-    tctx.globalCompositeOperation = "multiply";
+    // Paint the opaque pixels green (body fill, not an outline).
+    tctx.globalCompositeOperation = "source-in";
     tctx.fillStyle = this.tint;
     tctx.fillRect(0, 0, sourceWidth, sourceHeight);
-    // Restore sprite alpha so only the dino is colored
-    tctx.globalCompositeOperation = "destination-in";
-    tctx.drawImage(
-      sprite,
-      sourceX,
-      sourceY,
-      sourceWidth,
-      sourceHeight,
-      0,
-      0,
-      sourceWidth,
-      sourceHeight,
-    );
     tctx.globalCompositeOperation = "source-over";
     ctx.drawImage(this.tintCanvas, destX, destY);
   }
