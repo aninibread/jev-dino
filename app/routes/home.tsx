@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { RaceCanvas } from "../game/RaceCanvas";
+import type { Winner } from "../game/race";
 
 export function meta() {
   return [
@@ -68,8 +69,16 @@ function Rules() {
   );
 }
 
+function titleFor(winner: Winner) {
+  if (winner === "you") return "You win";
+  if (winner === "jev") return "Jev wins";
+  if (winner === "tie") return "Tie";
+  return "Race Jev";
+}
+
 export default function Home() {
   const [dialog, setDialog] = useState<"rules" | "credits" | null>(null);
+  const [winner, setWinner] = useState<Winner>(null);
 
   return (
     <div className="app-shell">
@@ -86,11 +95,10 @@ export default function Home() {
 
       <main className="page">
         <section className="intro">
-          <h1>Race Jev</h1>
-          <p>Same obstacles. Faster every second. Tap or press Space to race.</p>
+          <h1>{titleFor(winner)}</h1>
         </section>
 
-        <RaceCanvas />
+        <RaceCanvas onWinnerChange={setWinner} />
       </main>
 
       <footer className="site-footer">

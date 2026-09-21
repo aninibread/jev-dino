@@ -112,12 +112,6 @@ a:focus-visible {
   letter-spacing: -0.055em;
 }
 
-.intro p {
-  margin: 13px 0 0;
-  color: var(--muted);
-  font-size: 15px;
-}
-
 .muted {
   color: var(--muted);
   font-size: 13px;
@@ -130,9 +124,14 @@ a:focus-visible {
   width: 100%;
 }
 
-.race-canvas {
+.race-frame {
+  position: relative;
   width: 100%;
   max-width: 600px;
+}
+
+.race-canvas {
+  width: 100%;
   height: auto;
   display: block;
   border: 1px solid var(--line);
@@ -146,20 +145,17 @@ a:focus-visible {
 }
 
 .race-hud {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 1;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 14px;
+  gap: 10px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
-}
-
-.jev-action {
-  color: var(--ink);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  pointer-events: none;
+  line-height: 1;
 }
 
 .race-actions {
@@ -187,19 +183,16 @@ a:focus-visible {
   background: #2a2a2a;
 }
 
-.result-line {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 650;
-  letter-spacing: -0.03em;
-}
-
 .touch-controls {
   display: none;
   width: 100%;
   max-width: 600px;
   grid-template-columns: 1.2fr 1fr;
   gap: 10px;
+}
+
+.touch-controls:has(.touch-again) {
+  grid-template-columns: 1fr;
 }
 
 .touch-btn {
@@ -219,22 +212,17 @@ a:focus-visible {
   border-color: #bbb7af;
 }
 
-.touch-jump {
+.touch-jump,
+.touch-again {
   border-color: var(--ink);
   background: var(--ink);
   color: white;
 }
 
-.touch-jump:active {
+.touch-jump:active,
+.touch-again:active {
   background: #2a2a2a;
   border-color: #2a2a2a;
-}
-
-.touch-hint {
-  display: none;
-  margin: 0;
-  text-align: center;
-  font-size: 12px;
 }
 
 .modal {
@@ -325,21 +313,20 @@ a:focus-visible {
     font-size: clamp(28px, 9vw, 34px);
   }
 
-  .intro p {
-    font-size: 14px;
-  }
-
   .touch-controls {
     display: grid;
   }
 
-  .touch-hint {
-    display: block;
+  /* Mobile: Race again lives in touch row when the race ends. */
+  .phase-ended .race-actions {
+    display: none;
   }
 
   .race-hud {
-    gap: 10px 14px;
-    font-size: 11px;
+    top: 6px;
+    right: 8px;
+    gap: 8px;
+    font-size: 10px;
   }
 }
 
