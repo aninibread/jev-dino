@@ -256,7 +256,7 @@ export class Dino {
     ctx.restore();
   }
 
-  /** Multiply-tint the sprite so Jev reads as a different color, shading kept. */
+  /** Colorize the sprite while keeping original pixel shading. */
   private drawTinted(
     ctx: CanvasRenderingContext2D,
     sprite: HTMLImageElement,
@@ -290,6 +290,7 @@ export class Dino {
     this.tintCanvas.width = sourceWidth;
     this.tintCanvas.height = sourceHeight;
     tctx.clearRect(0, 0, sourceWidth, sourceHeight);
+    // Base sprite (greyscale pixels + alpha)
     tctx.globalCompositeOperation = "source-over";
     tctx.drawImage(
       sprite,
@@ -302,9 +303,23 @@ export class Dino {
       sourceWidth,
       sourceHeight,
     );
-    tctx.globalCompositeOperation = "source-in";
+    // Multiply color through existing shading
+    tctx.globalCompositeOperation = "multiply";
     tctx.fillStyle = this.tint;
     tctx.fillRect(0, 0, sourceWidth, sourceHeight);
+    // Restore sprite alpha so only the dino is colored
+    tctx.globalCompositeOperation = "destination-in";
+    tctx.drawImage(
+      sprite,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      sourceWidth,
+      sourceHeight,
+    );
     tctx.globalCompositeOperation = "source-over";
     ctx.drawImage(this.tintCanvas, destX, destY);
   }
