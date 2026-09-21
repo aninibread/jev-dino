@@ -80,7 +80,8 @@ export const OBSTACLE_TYPES: ObstacleTypeConfig[] = [
     kind: "cactus-small",
     width: 17,
     height: 35,
-    yPos: 105,
+    // Chromium uses 105; +3 plants the art on the ground line (sprite bottom pad).
+    yPos: 108,
     multipleSpeed: 4,
     minGap: 120,
     minSpeed: 0,
@@ -95,7 +96,8 @@ export const OBSTACLE_TYPES: ObstacleTypeConfig[] = [
     kind: "cactus-large",
     width: 25,
     height: 50,
-    yPos: 90,
+    // Chromium uses 90; +3 matches small-cactus plant offset.
+    yPos: 93,
     multipleSpeed: 7,
     minGap: 120,
     minSpeed: 0,
