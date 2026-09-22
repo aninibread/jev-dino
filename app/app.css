@@ -171,7 +171,7 @@ a:focus-visible {
   width: 100%;
   max-width: 600px;
   border-top: 1px solid var(--line);
-  padding-top: 10px;
+  padding-top: 8px;
   color: var(--ink);
 }
 
@@ -258,8 +258,8 @@ a:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin: 0 0 4px;
-  font-size: 11px;
+  margin: 0 0 3px;
+  font-size: 10px;
   font-weight: 650;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -267,8 +267,8 @@ a:focus-visible {
 }
 
 .jev-io-section-head-profile {
-  margin-top: 6px;
-  padding-top: 6px;
+  margin-top: 4px;
+  padding-top: 4px;
   border-top: 1px solid var(--line);
 }
 
@@ -286,7 +286,7 @@ a:focus-visible {
 .jev-io-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px 20px;
+  gap: 8px 18px;
   align-items: stretch;
 }
 
@@ -297,8 +297,8 @@ a:focus-visible {
 }
 
 .jev-io-col h3 {
-  margin: 0 0 6px;
-  font-size: 11px;
+  margin: 0 0 4px;
+  font-size: 10px;
   font-weight: 650;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -308,7 +308,7 @@ a:focus-visible {
 .jev-io-facts {
   margin: 0;
   display: grid;
-  gap: 4px;
+  gap: 2px;
   flex: 1;
 }
 
@@ -318,7 +318,7 @@ a:focus-visible {
   gap: 8px;
   align-items: baseline;
   font-size: 12px;
-  line-height: 1.2;
+  line-height: 1.15;
 }
 
 .jev-io-facts dt {
@@ -349,10 +349,10 @@ a:focus-visible {
 
 .jev-probs {
   list-style: none;
-  margin: 0 0 6px;
+  margin: 0 0 4px;
   padding: 0;
   display: grid;
-  gap: 5px;
+  gap: 3px;
 }
 
 .jev-probs-profile {
@@ -368,7 +368,7 @@ a:focus-visible {
   justify-content: space-between;
   gap: 10px;
   font-size: 12px;
-  margin-bottom: 2px;
+  margin-bottom: 1px;
 }
 
 .jev-prob-label strong {
@@ -387,7 +387,7 @@ a:focus-visible {
 }
 
 .jev-prob-track {
-  height: 4px;
+  height: 3px;
   background: var(--line);
   overflow: hidden;
 }
@@ -409,6 +409,8 @@ a:focus-visible {
   gap: 10px;
   min-height: 44px;
   width: 100%;
+  margin-top: 8px;
+  padding-top: 4px;
 }
 
 .primary {
