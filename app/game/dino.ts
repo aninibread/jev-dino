@@ -184,8 +184,8 @@ export class Dino {
       if (this.yPos < this.minJumpHeight) {
         this.reachedMinHeight = true;
       }
-      // Short profile stays in a normal arc until the controller ducks earlier
-      // (see obstacleClearedForShortDrop) — same fall physics as a player duck.
+      // Short profile stays in a normal arc until the controller ducks after
+      // the obstacle width has cleared (see obstacleClearedForShortDrop).
     }
 
     if (this.yPos > this.groundYPos) {

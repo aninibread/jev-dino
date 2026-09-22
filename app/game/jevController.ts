@@ -894,8 +894,8 @@ export class JevController {
     let wantJump = false;
     let wantDuck = false;
 
-    // Short hop: same duck physics as the player; press duck a touch early once
-    // the trailing edge is nearly past (see obstacleClearedForShortDrop).
+    // Short hop: full arc until the target width is cleared, then speed-drop
+    // (same duck physics as the player).
     if (this.shortHopObstacle) {
       if (snapshot.dinosaurMotion === "jumping") {
         if (
