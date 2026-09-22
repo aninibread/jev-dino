@@ -489,17 +489,23 @@ export class RaceGame {
     }
 
     if (!this.jev.crashed) {
-      // Apply Jev's key holds every frame (same as a human holding keys).
+      // Apply jump + duck as independent keys (Chromium-style).
+      // Mid-air duck = speed-drop without releasing jump-through-landing.
+      const { jump: jumpKey, duck: duckKey } = this.jevController.keys;
+      const jumpHeld = jumpKey >= 0.45;
+      const duckHeld = duckKey >= 0.45;
       const act = this.jevController.action;
       this.noteAction(act);
-      if (act === "duck") {
+
+      if (this.jev.jumping) {
+        this.jev.setDuck(duckHeld);
+      } else if (duckHeld) {
         this.jev.setDuck(true);
-      } else if (act === "jump") {
-        this.jev.setDuck(false);
-        this.jev.jump();
       } else {
         this.jev.setDuck(false);
+        if (jumpHeld) this.jev.jump();
       }
+
       this.jev.update(deltaTime);
       this.trackJevMemory();
       this.jevDistance += this.speed * deltaTime * 0.1;

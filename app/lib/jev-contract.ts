@@ -142,26 +142,29 @@ export function pickAction(
   press_jump: number,
   press_duck: number,
   airborne: boolean,
+  current: JevAction = "run",
 ): JevAction {
+  // Hysteresis stops flicker when nouls hover near the threshold.
+  const duckOn = current === "duck" ? 0.32 : 0.55;
+  const jumpOn = current === "jump" ? 0.32 : 0.5;
+
   if (airborne) {
-    // Keep "jump" visible while the jump key is held mid-air so memory
-    // doesn't flip jump→run every takeoff (that wiped action context).
-    if (press_duck >= 0.45) return "duck";
-    if (press_jump >= 0.45) return "jump";
-    return "run";
+    // Mid-air duck = speed-drop; prefer it only when clearly stronger than jump.
+    if (press_duck >= duckOn && press_duck >= press_jump - 0.05) return "duck";
+    if (press_jump >= jumpOn) return "jump";
+    return current === "jump" && press_jump >= 0.25 ? "jump" : "run";
   }
-  if (press_duck >= 0.5 && press_duck >= press_jump) return "duck";
-  if (press_jump >= 0.45) return "jump";
+
+  if (press_duck >= duckOn && press_duck >= press_jump) return "duck";
+  if (press_jump >= jumpOn) return "jump";
   return "run";
 }
 
 /**
- * Compose key holds from atomic nouls + physics constraints (Typesafe pattern:
- * narrow parallel questions → deterministic composition in code).
+ * Compose key holds from atomic nouls + physics constraints.
  *
- * Important for consecutive cacti: atomics go stale when the nearest id changes
- * (first scrolls past, second becomes nearest). Remap second_needs_jump onto the
- * new nearest when ask_second_id matches.
+ * Grounded duck (birds) and mid-air duck (speed-drop) are separate signals —
+ * mixing them caused rapid duck/unduck thrash.
  */
 export function composeKeyHolds(
   atomic: AtomicAnswers,
@@ -172,68 +175,77 @@ export function composeKeyHolds(
   const nearest = visible[0];
   const second = visible[1];
 
-  // Which atomic "jump this one?" belief applies to the current nearest?
   let jumpThisNearest = atomic.nearest_needs_jump;
   if (
     ask?.second_id &&
     nearest?.id === ask.second_id &&
     ask.nearest_id !== nearest.id
   ) {
-    // Nearest is what used to be #2 — use the second_* judgment.
     jumpThisNearest = Math.max(
       atomic.second_needs_jump,
       atomic.nearest_needs_jump,
     );
   }
 
-  // Chain intent: jump again soon after clearing the first.
   const chainIntent = Math.max(
     atomic.hold_jump_until_land,
     atomic.second_needs_jump,
-    atomic.gap_is_tight >= 0.5 ? atomic.second_needs_jump : 0,
   );
-  const wantsChain = chainIntent >= 0.45 && Boolean(second);
+  const wantsChain =
+    Boolean(second) &&
+    (chainIntent >= 0.45 ||
+      (atomic.gap_is_tight >= 0.55 && atomic.second_needs_jump >= 0.4));
 
   let press_jump = 0;
   let press_duck = 0;
 
   if (dino.airborne) {
-    // Hold jump through landing when a follow-up is needed.
     press_jump = wantsChain
       ? Math.max(atomic.hold_jump_until_land, chainIntent)
       : atomic.hold_jump_until_land;
-    if (constraints.mid_air_duck_means_speed_drop) {
-      // Slam down when the gap is tight so we can jump the second in time —
-      // but not while still rising into the first obstacle.
-      const pastFirst = Boolean(nearest?.already_jumped_for) || !dino.ascending;
-      const slam = Math.max(
+
+    // Mid-air duck is ONLY speed-drop — never grounded bird-duck.
+    // Gate on already_jumped_for + past apex so ascending frames don't flicker.
+    const pastApex =
+      Boolean(nearest?.already_jumped_for) &&
+      !dino.ascending &&
+      dino.jump_height_frac >= 0.35;
+    if (constraints.mid_air_duck_means_speed_drop && pastApex) {
+      press_duck = Math.max(
         atomic.speed_drop_now,
-        wantsChain && pastFirst && atomic.gap_is_tight >= 0.5
-          ? atomic.gap_is_tight
-          : 0,
-        atomic.nearest_needs_duck,
+        wantsChain && atomic.gap_is_tight >= 0.6 ? atomic.gap_is_tight * 0.85 : 0,
       );
-      press_duck = slam;
+    } else {
+      press_duck = 0;
     }
   } else if (nearest?.already_jumped_for) {
-    // Don't re-jump the cleared nearest — jump for the second if chaining.
-    press_jump = wantsChain ? chainIntent : 0;
+    press_jump = wantsChain ? Math.max(chainIntent, atomic.hold_jump_until_land) : 0;
     press_duck = atomic.nearest_needs_duck;
   } else {
-    // Fresh nearest (or remapped former-second).
     press_jump = jumpThisNearest;
-    if (wantsChain) {
-      press_jump = Math.max(press_jump, chainIntent);
-    }
+    if (wantsChain) press_jump = Math.max(press_jump, chainIntent);
     press_duck = atomic.nearest_needs_duck;
   }
 
-  // High bird you can run under — don't jump into it.
+  // High bird: run under — suppress jump (unless remapped second jumpable).
   if (nearest?.bird_altitude === "high" || atomic.nearest_run_under >= 0.65) {
-    // Still allow jump if we're chaining onto a non-high second that is now nearest.
     if (!(nearest?.id === ask?.second_id && jumpThisNearest >= 0.45)) {
-      press_jump = Math.min(press_jump, 0.12);
+      press_jump = Math.min(press_jump, 0.1);
     }
+  }
+
+  // Mid bird on ground: prefer duck over jump when duck is clearly needed.
+  if (
+    !dino.airborne &&
+    nearest?.bird_altitude === "mid" &&
+    atomic.nearest_needs_duck >= 0.5
+  ) {
+    press_jump = Math.min(press_jump, 0.2);
+  }
+
+  // Cactus: don't duck on the ground.
+  if (!dino.airborne && nearest && nearest.type !== "bird") {
+    press_duck = Math.min(press_duck, 0.15);
   }
 
   if (!constraints.can_jump_this_frame) {

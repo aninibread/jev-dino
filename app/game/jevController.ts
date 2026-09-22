@@ -15,9 +15,9 @@ export type JevControllerOptions = {
 };
 
 /**
- * Fair control loop: poll Jev with the visible lane; apply key-hold beliefs.
- * Re-asks as soon as a reply lands (and on landing / nearest change) so
- * consecutive obstacles get a fresh look — still no local planner inventing moves.
+ * Fair control loop with sticky key holds.
+ * Duck/jump thrash came from recomposing noisy nouls every frame and
+ * re-asking Jev as fast as possible — hold decisions until the hazard clears.
  */
 export class JevController {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -29,13 +29,20 @@ export class JevController {
   private pressDuck = 0;
   private wasAirborne = false;
   private lastNearestId: string | null = null;
+  /** Sticky duck until this obstacle id has passed (or timeout). */
+  private duckStickyId: string | null = null;
+  private duckStickyUntilMs = 0;
+  /** Sticky jump-through-landing until we leave the ground or timeout. */
+  private jumpStickyUntilMs = 0;
+  private nowMs = 0;
+  private lastAskAtMs = 0;
   private options: Required<Pick<JevControllerOptions, "intervalMs">> &
     JevControllerOptions;
   running = false;
 
   constructor(options: JevControllerOptions) {
-    // Poll often; actual rate is gated by in-flight (one ask at a time).
-    this.options = { intervalMs: 50, ...options };
+    // Ask less often — atomics persist; spam caused thrash.
+    this.options = { intervalMs: 220, ...options };
   }
 
   get action() {
@@ -46,6 +53,11 @@ export class JevController {
     return this.lastDecision;
   }
 
+  /** Raw key-hold beliefs — apply both independently (jump + mid-air duck). */
+  get keys() {
+    return { jump: this.pressJump, duck: this.pressDuck };
+  }
+
   start() {
     this.stop();
     this.running = true;
@@ -54,9 +66,14 @@ export class JevController {
     this.pressDuck = 0;
     this.wasAirborne = false;
     this.lastNearestId = null;
+    this.duckStickyId = null;
+    this.duckStickyUntilMs = 0;
+    this.jumpStickyUntilMs = 0;
+    this.nowMs = 0;
+    this.lastAskAtMs = 0;
     this.lastDecision = null;
     console.log(
-      "%c[Jev]%c System One — atomic nouls in parallel, key holds composed in code",
+      "%c[Jev]%c System One — sticky key holds, calmer asks",
       "color:#0a7;font-weight:700",
       "color:inherit",
     );
@@ -84,15 +101,18 @@ export class JevController {
     const state = this.options.getState();
     if (!state) return;
 
+    this.nowMs = state.t * 1000;
     const nearestId = state.visible[0]?.id ?? null;
 
-    // Landing edge → ask immediately (second cactus often needs a fresh press).
     if (this.wasAirborne && state.dino.grounded) {
-      void this.askJev();
+      // Landing: allow a fresh ask, keep jump sticky briefly for chains.
+      if (this.pressJump >= 0.4) {
+        this.jumpStickyUntilMs = this.nowMs + 180;
+      }
+      void this.askJev(true);
     }
-    // Nearest obstacle changed (first scrolled past) → remap needs a fresh ask.
     if (nearestId && nearestId !== this.lastNearestId && this.lastNearestId) {
-      void this.askJev();
+      void this.askJev(true);
     }
     this.lastNearestId = nearestId;
     this.wasAirborne = state.dino.airborne;
@@ -104,12 +124,12 @@ export class JevController {
     if (state.visible.length === 0) {
       this.pressJump = 0;
       this.pressDuck = 0;
+      this.duckStickyId = null;
       this.emitAction("run", 0, 0, "jev", state);
       return;
     }
 
-    // Recompose every frame from the last atomic answers + current state.
-    // Remaps second_needs_jump when the former #2 becomes nearest.
+    const nearest = state.visible[0]!;
     const atomic = this.lastDecision?.atomic;
     if (atomic) {
       const composed = composeKeyHolds(atomic, state, {
@@ -120,10 +140,52 @@ export class JevController {
       this.pressDuck = composed.press_duck;
     }
 
+    // --- Sticky duck: hold crouch through a mid bird until it passes ---
+    const birdNeedsDuck =
+      nearest.type === "bird" &&
+      nearest.bird_altitude === "mid" &&
+      nearest.relation !== "passing";
+
+    if (this.pressDuck >= 0.5 && birdNeedsDuck) {
+      this.duckStickyId = nearest.id;
+      // Hold at least through estimated clear time, min 280ms.
+      const clearMs = Math.max(280, (nearest.seconds_away + 0.2) * 1000);
+      this.duckStickyUntilMs = this.nowMs + Math.min(clearMs, 900);
+    }
+
+    if (this.duckStickyId) {
+      const sticky = state.visible.find((o) => o.id === this.duckStickyId);
+      const stillRelevant =
+        sticky &&
+        sticky.relation !== "passing" &&
+        sticky.dx + sticky.width > -8;
+      if (stillRelevant || this.nowMs < this.duckStickyUntilMs) {
+        this.pressDuck = Math.max(this.pressDuck, 0.85);
+        // Don't jump into a bird we're ducking under.
+        if (!state.dino.airborne) this.pressJump = Math.min(this.pressJump, 0.15);
+      } else {
+        this.duckStickyId = null;
+      }
+    }
+
+    // --- Sticky jump: keep jump held briefly through landing for chains ---
+    if (this.pressJump >= 0.55 && (state.dino.airborne || state.dino.just_landed)) {
+      this.jumpStickyUntilMs = Math.max(this.jumpStickyUntilMs, this.nowMs + 200);
+    }
+    if (this.nowMs < this.jumpStickyUntilMs && !this.duckStickyId) {
+      this.pressJump = Math.max(this.pressJump, 0.7);
+    }
+
+    // Grounded + duck sticky wins over jump.
+    if (!state.dino.airborne && this.pressDuck >= 0.55) {
+      this.pressJump = Math.min(this.pressJump, 0.2);
+    }
+
     const action = pickAction(
       this.pressJump,
       this.pressDuck,
       state.dino.airborne,
+      this.lastAction,
     );
     this.emitAction(action, this.pressJump, this.pressDuck, "jev", state);
   }
@@ -156,9 +218,13 @@ export class JevController {
     }
   }
 
-  private async askJev() {
+  private async askJev(force = false) {
     if (!this.running) return;
     if (this.inflight) return;
+    // Rate-limit non-forced asks so atomics can settle.
+    if (!force && this.nowMs - this.lastAskAtMs < this.options.intervalMs - 20) {
+      return;
+    }
 
     const state = this.options.getState();
     if (!state) return;
@@ -166,6 +232,7 @@ export class JevController {
 
     const controller = new AbortController();
     this.inflight = controller;
+    this.lastAskAtMs = this.nowMs;
     logJevAsk(state);
 
     try {
@@ -189,50 +256,34 @@ export class JevController {
       const askSecond = body.ask_second_id ?? state.visible[1]?.id ?? null;
       const atomic = body.atomic ?? emptyAtomic();
 
-      // Prefer server-composed press_*; recompose with ask context if needed.
-      let pressJump =
-        typeof body.press_jump === "number"
-          ? body.press_jump
-          : typeof body.jump_now === "number"
-            ? body.jump_now
-            : body.action === "jump"
-              ? 0.9
-              : 0.05;
-      let pressDuck =
-        typeof body.press_duck === "number"
-          ? body.press_duck
-          : typeof body.duck_now === "number"
-            ? body.duck_now
-            : body.action === "duck"
-              ? 0.9
-              : 0.05;
+      const live = this.options.getState() ?? state;
+      const composed = composeKeyHolds(atomic, live, {
+        nearest_id: askNearest,
+        second_id: askSecond,
+      });
 
-      if (body.atomic) {
-        const composed = composeKeyHolds(atomic, state, {
-          nearest_id: askNearest,
-          second_id: askSecond,
-        });
-        pressJump = composed.press_jump;
-        pressDuck = composed.press_duck;
-      }
-
-      this.pressJump = pressJump;
-      this.pressDuck = pressDuck;
+      this.pressJump = composed.press_jump;
+      this.pressDuck = composed.press_duck;
 
       this.lastDecision = {
-        action: pickAction(pressJump, pressDuck, state.dino.airborne),
-        press_jump: pressJump,
-        press_duck: pressDuck,
+        action: pickAction(
+          this.pressJump,
+          this.pressDuck,
+          live.dino.airborne,
+          this.lastAction,
+        ),
+        press_jump: this.pressJump,
+        press_duck: this.pressDuck,
         atomic,
         ask_nearest_id: askNearest,
         ask_second_id: askSecond,
-        confidence: Math.max(pressJump, pressDuck),
+        confidence: Math.max(this.pressJump, this.pressDuck),
         durationMs: body.durationMs ?? 0,
         source: "jev",
       };
-      logJevReply(this.lastDecision, state);
+      logJevReply(this.lastDecision, live);
       this.options.onDecision(this.lastDecision);
-      this.applyHolds(state);
+      this.applyHolds(live);
     } catch (error) {
       if ((error as Error)?.name === "AbortError") return;
       console.log(
@@ -243,8 +294,7 @@ export class JevController {
       );
     } finally {
       if (this.inflight === controller) this.inflight = null;
-      // Chain the next look as soon as we're free while hazards remain.
-      if (this.running) void this.askJev();
+      // Do NOT immediately chain another ask — that thrashed duck/jump.
     }
   }
 }
