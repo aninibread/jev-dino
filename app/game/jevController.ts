@@ -39,6 +39,7 @@ export type JevIoView = {
   status: JevIoStatus;
   ask: JevAskView | null;
   decision: DecideResponse | null;
+  error?: string | null;
 };
 
 export type JevControllerOptions = {
@@ -95,6 +96,7 @@ export class JevController {
   private lastDecision: DecideResponse | null = null;
   private lastAsk: JevAskView | null = null;
   private lastStatus: JevIoStatus = "idle";
+  private lastError: string | null = null;
   private pressJump = 0;
   private pressDuck = 0;
   private jumpProfile: JumpProfile = "full";
@@ -135,9 +137,16 @@ export class JevController {
     status: JevIoStatus,
     ask = this.lastAsk,
     decision = this.lastDecision,
+    error: string | null = null,
   ) {
     this.lastStatus = status;
-    this.options.onIo({ status, ask, decision });
+    this.lastError = status === "error" ? error : null;
+    this.options.onIo({
+      status,
+      ask,
+      decision,
+      error: this.lastError,
+    });
   }
 
   start() {
@@ -151,6 +160,7 @@ export class JevController {
     this.lastDecision = null;
     this.lastAsk = null;
     this.lastStatus = "idle";
+    this.lastError = null;
     this.pressJump = 0;
     this.pressDuck = 0;
     this.jumpProfile = "full";
@@ -361,12 +371,14 @@ export class JevController {
       }
 
       plan.status = "error";
-      this.emitIo("error", ask, this.lastDecision);
+      const message =
+        error instanceof Error ? error.message : "request failed";
+      this.emitIo("error", ask, this.lastDecision, message);
       console.log(
         "%c[Jev reply]%c (request failed) %s",
         "color:#666;font-weight:600",
         "color:inherit",
-        error instanceof Error ? error.message : "request failed",
+        message,
       );
     }
   }

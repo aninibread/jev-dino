@@ -36,6 +36,7 @@ export type RaceSnapshot = {
   lastJev: DecideResponse | null;
   lastJevAsk: JevAskView | null;
   jevIoStatus: JevIoStatus;
+  jevIoError: string | null;
   /** Seconds left in the watch-Jev window (spectating only). */
   spectateLeftMs: number;
 };
@@ -67,6 +68,7 @@ export class RaceGame {
   lastJev: DecideResponse | null = null;
   lastJevAsk: JevAskView | null = null;
   jevIoStatus: JevIoStatus = "idle";
+  jevIoError: string | null = null;
   private spectateElapsedMs = 0;
   /** Frozen bitmap of the YOU lane after crash (spectate / ended). */
   private youFreeze: HTMLCanvasElement | null = null;
@@ -91,8 +93,9 @@ export class RaceGame {
     this.jev = new Dino("JEV");
     this.jevController = new JevController({
       getSnapshot: () => this.buildJevSnapshot(),
-      onIo: ({ status, ask, decision }) => {
+      onIo: ({ status, ask, decision, error }) => {
         this.jevIoStatus = status;
+        this.jevIoError = error ?? null;
         this.lastJevAsk = ask;
         if (decision) this.lastJev = decision;
         this.emit();
@@ -225,6 +228,7 @@ export class RaceGame {
     this.lastJev = null;
     this.lastJevAsk = null;
     this.jevIoStatus = "idle";
+    this.jevIoError = null;
     this.duckHeld = false;
     this.you.startRunning();
     this.jev.startRunning();
@@ -437,6 +441,7 @@ export class RaceGame {
       lastJev: this.lastJev,
       lastJevAsk: this.lastJevAsk,
       jevIoStatus: this.jevIoStatus,
+      jevIoError: this.jevIoError,
       spectateLeftMs:
         this.phase === "spectating"
           ? Math.max(0, SPECTATE_MS - this.spectateElapsedMs)

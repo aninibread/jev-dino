@@ -26,8 +26,17 @@ function statusLabel(status: JevIoStatus): string {
   return "Waiting";
 }
 
-function StatusIcon({ status }: { status: JevIoStatus }) {
-  const label = statusLabel(status);
+function StatusIcon({
+  status,
+  error,
+}: {
+  status: JevIoStatus;
+  error?: string | null;
+}) {
+  const label =
+    status === "error" && error?.trim()
+      ? error.trim()
+      : statusLabel(status);
   return (
     <span
       className={`jev-io-status status-${status}`}
@@ -109,11 +118,13 @@ export function JevIoPanel({
   ask,
   decision,
   status,
+  error,
   active,
 }: {
   ask: JevAskView | null;
   decision: DecideResponse | null;
   status: JevIoStatus;
+  error?: string | null;
   active: boolean;
 }) {
   // Keep the last probabilities mounted so the right column does not flash away
@@ -129,7 +140,7 @@ export function JevIoPanel({
     >
       <header className="jev-io-head">
         <h2>Jev</h2>
-        <StatusIcon status={status} />
+        <StatusIcon status={status} error={error} />
       </header>
 
       <div className="jev-io-grid">
