@@ -85,7 +85,7 @@ export function RaceCanvas({
         aria-live="polite"
         title="Estimated from typesafe/jev input tokens at $0.042 / 1M tokens (TypeSafe published rate; Workers AI dashboard may differ)."
       >
-        ~{formatJevCostUsd(snapshot?.jevCostUsd ?? 0)}
+        Jev this round {formatJevCostUsd(snapshot?.jevCostUsd ?? 0)}
       </div>
       <div className="race-frame">
         <canvas
