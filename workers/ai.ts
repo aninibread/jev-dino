@@ -12,6 +12,11 @@ import {
   type Maneuver,
   type ManeuverProbabilities,
 } from "../app/lib/jev-contract";
+import {
+  estimateInputTokensFromPayload,
+  parseInputTokensFromResult,
+  usageFromInputTokens,
+} from "../app/lib/jev-cost";
 import { JEV_SERVER_TIMEOUT_MS } from "../app/game/constants";
 
 export class ApiError extends Error {
@@ -197,23 +202,28 @@ export async function decideManeuverWithJev(
   signal?: AbortSignal,
 ): Promise<DecideResponse> {
   const start = performance.now();
-  const result = await ai.run(
-    "typesafe/jev",
-    {
-      state: buildManeuverState(state),
-      questions: buildManeuverQuestions(),
-    },
-    {
-      signal: AbortSignal.any([
-        AbortSignal.timeout(JEV_SERVER_TIMEOUT_MS),
-        ...(signal ? [signal] : []),
-      ]),
-    },
-  );
+  const ask = {
+    state: buildManeuverState(state),
+    questions: buildManeuverQuestions(),
+  };
+  const result = await ai.run("typesafe/jev", ask, {
+    signal: AbortSignal.any([
+      AbortSignal.timeout(JEV_SERVER_TIMEOUT_MS),
+      ...(signal ? [signal] : []),
+    ]),
+  });
+  const inputTokens =
+    parseInputTokensFromResult(result) ??
+    estimateInputTokensFromPayload(ask);
+  const usage = usageFromInputTokens(inputTokens);
   return {
     ...parseManeuverResponse(result, state),
     durationMs: performance.now() - start,
     source: "jev",
+    usage: {
+      input_tokens: usage.inputTokens,
+      cost_usd: usage.costUsd,
+    },
   };
 }
 
@@ -228,26 +238,35 @@ export async function decideJumpProfileWithJev(
   durationMs: number;
   source: "jev" | "none";
   obstacle_id: string;
+  usage?: {
+    input_tokens: number;
+    cost_usd: number;
+  };
 }> {
   const start = performance.now();
-  const result = await ai.run(
-    "typesafe/jev",
-    {
-      state: buildJumpProfileState(state),
-      questions: buildJumpProfileQuestions(),
-    },
-    {
-      signal: AbortSignal.any([
-        AbortSignal.timeout(JEV_SERVER_TIMEOUT_MS),
-        ...(signal ? [signal] : []),
-      ]),
-    },
-  );
+  const ask = {
+    state: buildJumpProfileState(state),
+    questions: buildJumpProfileQuestions(),
+  };
+  const result = await ai.run("typesafe/jev", ask, {
+    signal: AbortSignal.any([
+      AbortSignal.timeout(JEV_SERVER_TIMEOUT_MS),
+      ...(signal ? [signal] : []),
+    ]),
+  });
+  const inputTokens =
+    parseInputTokensFromResult(result) ??
+    estimateInputTokensFromPayload(ask);
+  const usage = usageFromInputTokens(inputTokens);
   return {
     ...parseJumpProfileResponse(result, state),
     durationMs: performance.now() - start,
     source: "jev",
     obstacle_id: state.obstacle.id,
+    usage: {
+      input_tokens: usage.inputTokens,
+      cost_usd: usage.costUsd,
+    },
   };
 }
 
