@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { RaceCanvas } from "../game/RaceCanvas";
+import type { Winner } from "../game/race";
 
 export function meta() {
   return [
-    { title: "Dino — Race Jev" },
+    { title: "Dino - Race Jev" },
     {
       name: "description",
       content: "Race the Chrome dinosaur against Jev. Sixty seconds. Don’t blink.",
@@ -54,8 +55,9 @@ function Rules() {
         On phones: tap the track or Jump; hold Duck for birds.
       </p>
       <p>
-        <b>Jev</b> runs the bottom lane on the same obstacles, deciding jump,
-        duck, or run through Workers AI.
+        <b>Jev</b> runs the bottom lane on the same obstacles. For each
+        obstacle it picks jump, duck, or keep running once; the game times
+        the move.
       </p>
       <p>
         The track gets much faster over <b>60 seconds</b>. First crash loses.
@@ -68,8 +70,16 @@ function Rules() {
   );
 }
 
+function titleFor(winner: Winner) {
+  if (winner === "you") return "🥇 You win";
+  if (winner === "jev") return "🥈 Jev wins";
+  if (winner === "tie") return "Tie";
+  return "Race Jev";
+}
+
 export default function Home() {
   const [dialog, setDialog] = useState<"rules" | "credits" | null>(null);
+  const [winner, setWinner] = useState<Winner>(null);
 
   return (
     <div className="app-shell">
@@ -86,11 +96,10 @@ export default function Home() {
 
       <main className="page">
         <section className="intro">
-          <h1>Race Jev</h1>
-          <p>Same obstacles. Faster every second. Tap or press Space to race.</p>
+          <h1>{titleFor(winner)}</h1>
         </section>
 
-        <RaceCanvas />
+        <RaceCanvas onWinnerChange={setWinner} />
       </main>
 
       <footer className="site-footer">
@@ -135,7 +144,15 @@ export default function Home() {
               >
                 TypeSafe Jev
               </a>{" "}
-              on Cloudflare Workers AI.
+              on Cloudflare Workers AI. Per-obstacle maneuver timing inspired by{" "}
+              <a
+                href="https://github.com/joshlarsen/jev-t-rex-runner"
+                target="_blank"
+                rel="noreferrer"
+              >
+                joshlarsen/jev-t-rex-runner
+              </a>
+              .
             </p>
           </div>
         </Dialog>

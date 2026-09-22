@@ -112,12 +112,6 @@ a:focus-visible {
   letter-spacing: -0.055em;
 }
 
-.intro p {
-  margin: 13px 0 0;
-  color: var(--muted);
-  font-size: 15px;
-}
-
 .muted {
   color: var(--muted);
   font-size: 13px;
@@ -130,9 +124,14 @@ a:focus-visible {
   width: 100%;
 }
 
-.race-canvas {
+.race-frame {
+  position: relative;
   width: 100%;
   max-width: 600px;
+}
+
+.race-canvas {
+  width: 100%;
   height: auto;
   display: block;
   border: 1px solid var(--line);
@@ -146,20 +145,184 @@ a:focus-visible {
 }
 
 .race-hud {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 1;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 14px;
+  gap: 10px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  line-height: 1;
 }
 
-.jev-action {
+.jev-io {
+  width: 100%;
+  max-width: 600px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
   color: var(--ink);
-  font-weight: 600;
-  text-transform: uppercase;
+}
+
+.jev-io-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.jev-io-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.jev-io-status {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.jev-io-status svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.jev-io-status.status-thinking {
+  color: #0a7;
+}
+
+.jev-io-status.status-ready {
+  color: #0a7;
+}
+
+.jev-io-status.status-skipped,
+.jev-io-status.status-late,
+.jev-io-status.status-error {
+  color: #a35;
+}
+
+@keyframes jev-io-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.jev-io-spin {
+  transform-origin: 8px 8px;
+  animation: jev-io-spin 0.85s linear infinite;
+}
+
+.jev-io-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px 24px;
+}
+
+.jev-io-col h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 650;
   letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.jev-io-facts {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.jev-io-facts > div {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.jev-io-facts dt {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.jev-io-facts dd {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.jev-io-facts .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.jev-io-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.jev-probs {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.jev-prob-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  margin-bottom: 3px;
+}
+
+.jev-prob-label strong {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.jev-probs li.is-chosen .jev-prob-label {
+  font-weight: 650;
+}
+
+.jev-probs li.is-chosen .jev-prob-label span::after {
+  content: " ←";
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.jev-prob-track {
+  height: 4px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.jev-prob-fill {
+  height: 100%;
+  background: var(--ink);
+  width: 0;
+  transition: width 160ms ease-out;
+}
+
+.jev-probs li.is-chosen .jev-prob-fill {
+  background: #0a7;
 }
 
 .race-actions {
@@ -187,19 +350,46 @@ a:focus-visible {
   background: #2a2a2a;
 }
 
-.result-line {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 650;
-  letter-spacing: -0.03em;
-}
-
 .touch-controls {
   display: none;
   width: 100%;
   max-width: 600px;
   grid-template-columns: 1.2fr 1fr;
   gap: 10px;
+}
+
+.touch-controls:has(.touch-ended) {
+  grid-template-columns: 1fr;
+}
+
+.touch-ended {
+  display: grid;
+  gap: 14px;
+  width: 100%;
+  padding-top: 8px;
+}
+
+.phase-ended .touch-ended {
+  /* Keep Race again below the old Jump/Duck hot zone without repeating the title. */
+  padding-top: 64px;
+}
+
+.touch-result {
+  margin: 0;
+  min-height: 48px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--muted);
+}
+
+.touch-spectate-meta {
+  margin: -8px 0 0;
+  text-align: center;
+  font-size: 12px;
 }
 
 .touch-btn {
@@ -219,22 +409,17 @@ a:focus-visible {
   border-color: #bbb7af;
 }
 
-.touch-jump {
+.touch-jump,
+.touch-again {
   border-color: var(--ink);
   background: var(--ink);
   color: white;
 }
 
-.touch-jump:active {
+.touch-jump:active,
+.touch-again:active {
   background: #2a2a2a;
   border-color: #2a2a2a;
-}
-
-.touch-hint {
-  display: none;
-  margin: 0;
-  text-align: center;
-  font-size: 12px;
 }
 
 .modal {
@@ -303,57 +488,129 @@ a:focus-visible {
 @media (max-width: 640px), (pointer: coarse) {
   .site-header,
   .site-footer {
-    padding-left: max(18px, env(safe-area-inset-left));
-    padding-right: max(18px, env(safe-area-inset-right));
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+    padding-top: 12px;
+    padding-bottom: 10px;
   }
 
   .site-footer {
-    padding-bottom: max(18px, env(safe-area-inset-bottom));
+    padding-top: 16px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
 
+  .brand {
+    font-size: 17px;
+  }
+
+  /* Full-bleed page so the race window can use the phone width. */
   .page {
-    width: min(100% - 28px, 640px);
-    padding-top: 28px;
-    padding-bottom: 24px;
+    width: 100%;
+    max-width: none;
+    padding: 8px 0 12px;
   }
 
   .intro {
-    margin-bottom: 18px;
+    margin-bottom: 10px;
+    padding: 0 14px;
   }
 
   .intro h1 {
-    font-size: clamp(28px, 9vw, 34px);
+    font-size: clamp(26px, 8vw, 32px);
   }
 
-  .intro p {
-    font-size: 14px;
+  .race-stage {
+    gap: 10px;
+  }
+
+  .race-frame {
+    max-width: none;
+    width: 100%;
+  }
+
+  .race-canvas {
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
   }
 
   .touch-controls {
     display: grid;
+    max-width: none;
+    width: calc(100% - 24px);
+    margin-top: 20px;
+    margin-bottom: 4px;
+    padding-bottom: 4px;
   }
 
-  .touch-hint {
-    display: block;
+  .jev-io {
+    max-width: none;
+    width: calc(100% - 24px);
+    padding-top: 10px;
+  }
+
+  .jev-io-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px 14px;
+  }
+
+  .jev-io-col h3 {
+    margin-bottom: 6px;
+    font-size: 10px;
+  }
+
+  .jev-io-facts {
+    gap: 5px;
+  }
+
+  .jev-io-facts > div {
+    grid-template-columns: 1fr;
+    gap: 1px;
+    font-size: 12px;
+  }
+
+  .jev-io-facts dt {
+    font-size: 10px;
+  }
+
+  .jev-probs {
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  .jev-prob-label {
+    font-size: 12px;
+  }
+
+  .touch-btn {
+    min-height: 54px;
+  }
+
+  /* Mobile uses Jump/Duck (idle/play) or ended/spectate panels — no separate CTA. */
+  .race-actions {
+    display: none;
   }
 
   .race-hud {
-    gap: 10px 14px;
+    top: 6px;
+    right: 10px;
+    gap: 8px;
     font-size: 11px;
   }
 }
 
 @media (max-width: 380px) {
-  .page {
-    width: min(100% - 20px, 640px);
+  .intro {
+    padding: 0 10px;
   }
 
   .touch-controls {
+    width: calc(100% - 16px);
     grid-template-columns: 1fr 1fr;
   }
 
   .touch-btn {
-    min-height: 52px;
+    min-height: 50px;
     font-size: 15px;
   }
 }

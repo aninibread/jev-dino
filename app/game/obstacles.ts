@@ -1,18 +1,36 @@
 import {
   DEFAULT_WIDTH,
   FPS,
+  JEV_ASK_LEAD_SECONDS,
+  JEV_MAX_OFFSCREEN,
   OBSTACLE_TYPES,
   SPRITE_LDPI,
   type Box,
   type ObstacleTypeConfig,
 } from "./constants";
-import { gapShrink, maxObstacleSize } from "./speedCurve";
+import {
+  birdHeightIndex,
+  chromiumGapPixels,
+  gapCoefficientFor,
+  maxObstacleSize,
+  obstacleWeights,
+} from "./speedCurve";
 
 function rand(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+/** Pixels of off-screen lead so Jev gets asked well before proximity timing. */
+export function askLeadPixels(speed: number): number {
+  const safeSpeed = Math.max(Number(speed) || 0, 6);
+  return Math.round(safeSpeed * FPS * JEV_ASK_LEAD_SECONDS);
+}
+
+let nextObstacleId = 1;
+
 export class Obstacle {
+  /** Stable id for the lifetime of this obstacle (for Jev memory). */
+  id: string;
   typeConfig: ObstacleTypeConfig;
   size: number;
   xPos: number;
@@ -30,16 +48,18 @@ export class Obstacle {
     speed: number,
     gapCoefficient: number,
     elapsedMs: number,
-    xOffset = 0,
+    xPos = DEFAULT_WIDTH,
   ) {
+    this.id = `obs-${nextObstacleId++}`;
     this.typeConfig = typeConfig;
-    this.size = rand(1, maxObstacleSize(elapsedMs, speed));
+    this.size = rand(1, maxObstacleSize(speed));
     if (this.size > 1 && typeConfig.multipleSpeed > speed) this.size = 1;
     this.width = typeConfig.width * this.size;
-    this.xPos = DEFAULT_WIDTH + xOffset;
+    this.xPos = xPos;
 
     if (Array.isArray(typeConfig.yPos)) {
-      this.yPos = typeConfig.yPos[rand(0, typeConfig.yPos.length - 1)]!;
+      const idx = birdHeightIndex(elapsedMs, typeConfig.yPos.length);
+      this.yPos = typeConfig.yPos[idx]!;
     } else {
       this.yPos = typeConfig.yPos;
     }
@@ -58,11 +78,12 @@ export class Obstacle {
         Math.random() > 0.5 ? typeConfig.speedOffset : -typeConfig.speedOffset;
     }
 
-    const shrink = gapShrink(elapsedMs);
-    const minGap = Math.round(
-      this.width * speed + typeConfig.minGap * gapCoefficient * shrink,
+    const { minGap, maxGap } = chromiumGapPixels(
+      this.width,
+      speed,
+      gapCoefficient,
+      typeConfig.minGap,
     );
-    const maxGap = Math.round(minGap * 1.5);
     this.gap = rand(minGap, maxGap);
   }
 
@@ -130,14 +151,16 @@ export class Obstacle {
   }
 }
 
+/** Chromium MAX_OBSTACLE_DUPLICATION — avoid three identical types in a row. */
+const MAX_OBSTACLE_DUPLICATION = 2;
+
 export class ObstacleManager {
   obstacles: Obstacle[] = [];
-  gapCoefficient = 0.6;
-  followingObstacleCreated = false;
+  private history: string[] = [];
 
   reset() {
     this.obstacles = [];
-    this.followingObstacleCreated = false;
+    this.history = [];
   }
 
   update(deltaTime: number, speed: number, elapsedMs: number) {
@@ -146,39 +169,74 @@ export class ObstacleManager {
     }
     this.obstacles = this.obstacles.filter((o) => !o.remove);
 
-    if (this.obstacles.length > 0) {
+    const lead = askLeadPixels(speed);
+    const spawnHorizon = DEFAULT_WIDTH + lead;
+
+    if (this.obstacles.length === 0) {
+      this.addNewObstacle(speed, elapsedMs, spawnHorizon);
+    }
+
+    // Eagerly keep a follow-on in the pipeline so Jev can see next_obstacle
+    // when asking about the current one (not only once it crosses spawnHorizon).
+    while (this.obstacles.length > 0) {
+      const offscreen = this.obstacles.filter(
+        (o) => o.xPos >= DEFAULT_WIDTH,
+      ).length;
+      if (offscreen >= JEV_MAX_OFFSCREEN) break;
       const last = this.obstacles[this.obstacles.length - 1]!;
-      if (
-        last.xPos + last.width + last.gap < DEFAULT_WIDTH &&
-        !this.followingObstacleCreated
-      ) {
-        this.addNewObstacle(speed, elapsedMs);
-        this.followingObstacleCreated = true;
-      } else if (last.xPos + last.width + last.gap >= DEFAULT_WIDTH) {
-        this.followingObstacleCreated = false;
-      }
-    } else {
-      this.addNewObstacle(speed, elapsedMs);
+      const nextX = last.xPos + last.width + last.gap;
+      this.addNewObstacle(speed, elapsedMs, nextX);
     }
   }
 
-  addNewObstacle(speed: number, elapsedMs: number) {
-    const candidates = OBSTACLE_TYPES.filter((t) => {
-      if (elapsedMs < 12_000 && t.type === "PTERODACTYL") return false;
-      return speed >= t.minSpeed;
-    });
-    const pool = candidates.length ? candidates : OBSTACLE_TYPES.slice(0, 2);
-    const type = pool[rand(0, pool.length - 1)]!;
-    // Prefer small cactus for the first few spawns.
-    const forced =
-      elapsedMs < 10_000 && Math.random() < 0.7
-        ? OBSTACLE_TYPES.find((t) => t.type === "CACTUS_SMALL")!
-        : type;
-    // Extra runway for the very first obstacle of a race.
-    const xOffset = this.obstacles.length === 0 ? 280 : 0;
-    this.obstacles.push(
-      new Obstacle(forced, speed, this.gapCoefficient, elapsedMs, xOffset),
-    );
+  private duplicateCheck(type: string): boolean {
+    let dup = 0;
+    for (const prev of this.history) {
+      dup = prev === type ? dup + 1 : 0;
+    }
+    return dup >= MAX_OBSTACLE_DUPLICATION;
+  }
+
+  private pickType(speed: number, elapsedMs: number): ObstacleTypeConfig {
+    const weights = obstacleWeights(elapsedMs, speed);
+    const small = OBSTACLE_TYPES.find((t) => t.type === "CACTUS_SMALL")!;
+    const large = OBSTACLE_TYPES.find((t) => t.type === "CACTUS_LARGE")!;
+    const bird = OBSTACLE_TYPES.find((t) => t.type === "PTERODACTYL")!;
+
+    const options: { type: ObstacleTypeConfig; w: number }[] = [
+      { type: small, w: weights.small },
+      { type: large, w: weights.large },
+    ];
+    if (speed >= bird.minSpeed && weights.bird > 0) {
+      options.push({ type: bird, w: weights.bird });
+    }
+
+    // Retry a few times to avoid duplicate streaks (Chromium does the same).
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const total = options.reduce((s, o) => s + o.w, 0);
+      let roll = Math.random() * total;
+      let picked = options[0]!.type;
+      for (const opt of options) {
+        roll -= opt.w;
+        if (roll <= 0) {
+          picked = opt.type;
+          break;
+        }
+      }
+      if (!this.duplicateCheck(picked.type)) return picked;
+    }
+    return small;
+  }
+
+  addNewObstacle(speed: number, elapsedMs: number, xPos?: number) {
+    const type = this.pickType(speed, elapsedMs);
+    const coeff = gapCoefficientFor(elapsedMs);
+    const spawnX = xPos ?? DEFAULT_WIDTH + askLeadPixels(speed);
+    this.obstacles.push(new Obstacle(type, speed, coeff, elapsedMs, spawnX));
+    this.history.unshift(type.type);
+    if (this.history.length > MAX_OBSTACLE_DUPLICATION) {
+      this.history.length = MAX_OBSTACLE_DUPLICATION;
+    }
   }
 
   draw(
@@ -192,11 +250,12 @@ export class ObstacleManager {
   }
 
   /** Snapshot for Jev — relative to a dino at TREX.START_X. */
-  upcomingFor(dinoX: number, limit = 3) {
+  upcomingFor(dinoX: number, limit = 6) {
     return this.obstacles
       .filter((o) => o.xPos + o.width > dinoX)
       .slice(0, limit)
       .map((o) => ({
+        id: o.id,
         type: o.typeConfig.kind,
         dx: o.xPos - dinoX,
         width: o.width,

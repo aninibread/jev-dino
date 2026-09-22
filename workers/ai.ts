@@ -1,11 +1,15 @@
 import {
-  duckLeadSeconds,
-  heuristicDecide,
-  jumpLeadSeconds,
-  pickAction,
+  buildManeuverQuestions,
+  buildManeuverState,
+  EMPTY_PROBABILITIES,
+  maneuverToPresses,
   type DecideResponse,
   type DecideState,
+  type JumpProfile,
+  type Maneuver,
+  type ManeuverProbabilities,
 } from "../app/lib/jev-contract";
+import { JEV_SERVER_TIMEOUT_MS } from "../app/game/constants";
 
 export class ApiError extends Error {
   constructor(
@@ -19,7 +23,13 @@ export class ApiError extends Error {
 const object = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-function findNoul(value: unknown, key: string): number | null {
+const MANEUVERS: Maneuver[] = ["jump", "duck", "keep_running"];
+const PROFILES: JumpProfile[] = ["short", "full"];
+
+function findAnswerBlock(
+  value: unknown,
+  key: string,
+): Record<string, unknown> | null {
   const queue: unknown[] = [value];
   const seen = new Set<unknown>();
   for (let depth = 0; queue.length && depth < 12; depth++) {
@@ -35,10 +45,7 @@ function findNoul(value: unknown, key: string): number | null {
     if (!object(candidate) || seen.has(candidate)) continue;
     seen.add(candidate);
     if (object(candidate.answers) && object(candidate.answers[key])) {
-      const answer = candidate.answers[key] as Record<string, unknown>;
-      if (typeof answer.noul === "number" && Number.isFinite(answer.noul)) {
-        return Math.min(1, Math.max(0, answer.noul));
-      }
+      return candidate.answers[key] as Record<string, unknown>;
     }
     for (const nested of ["result", "response", "output", "data"]) {
       if (nested in candidate) queue.push(candidate[nested]);
@@ -47,20 +54,107 @@ function findNoul(value: unknown, key: string): number | null {
   return null;
 }
 
+function parseProbabilities(
+  block: Record<string, unknown> | null,
+  allowed: string[],
+  chosen: string,
+  confidence: number,
+): ManeuverProbabilities {
+  const probs = { ...EMPTY_PROBABILITIES };
+  const raw = block && object(block.probabilities) ? block.probabilities : null;
+  let sum = 0;
+  if (raw) {
+    for (const key of allowed) {
+      const value = raw[key];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        const clamped = Math.min(1, Math.max(0, value));
+        probs[key as Maneuver] = clamped;
+        sum += clamped;
+      }
+    }
+  }
+  // Fallback: put confidence on the chosen maneuver when Jev omits probs.
+  if (sum < 0.01) {
+    for (const key of allowed) probs[key as Maneuver] = 0;
+    probs[chosen as Maneuver] = confidence;
+    return probs;
+  }
+  // Normalize so the three bars read as a distribution.
+  for (const key of allowed) {
+    probs[key as Maneuver] = probs[key as Maneuver] / sum;
+  }
+  return probs;
+}
+
+function parseChoice(
+  value: unknown,
+  key: string,
+  allowed: string[],
+): {
+  choice: string;
+  confidence: number;
+  block: Record<string, unknown>;
+} | null {
+  const block = findAnswerBlock(value, key);
+  if (!block) return null;
+  const choice =
+    typeof block.choice === "string"
+      ? block.choice
+      : typeof block.answer === "string"
+        ? block.answer
+        : null;
+  if (!choice || !allowed.includes(choice)) return null;
+  const confidence =
+    typeof block.confidence === "number" && Number.isFinite(block.confidence)
+      ? Math.min(1, Math.max(0, block.confidence))
+      : typeof block.noul === "number"
+        ? Math.min(1, Math.max(0, block.noul))
+        : 0.5;
+  return { choice, confidence, block };
+}
+
 export function parseDecideResponse(
   value: unknown,
+  state: DecideState,
 ): Omit<DecideResponse, "durationMs" | "source"> {
-  const jump_now = findNoul(value, "jump_now");
-  const duck_now = findNoul(value, "duck_now");
-  if (jump_now === null || duck_now === null) {
-    throw new ApiError(502, "Jev returned an unreadable answer.");
+  const maneuver = parseChoice(value, "maneuver", MANEUVERS);
+  if (!maneuver) {
+    throw new ApiError(502, "Jev returned an unreadable maneuver.");
   }
-  const action = pickAction(jump_now, duck_now);
+  const profile =
+    parseChoice(value, "jump_profile", PROFILES) ?? {
+      choice: "full" as const,
+      confidence: 0.5,
+      block: {},
+    };
+
+  const action = maneuver.choice as Maneuver;
+  let jump_profile = profile.choice as JumpProfile;
+  // Only allow short jump for a lone small cactus (same rule as reference).
+  // Prefer Jev's short choice when eligible — do not require high profile
+  // confidence, since that question is often weakly scored.
+  const shortOk =
+    state.obstacle.kind === "small_cactus" &&
+    state.obstacle.group === "single";
+  if (action !== "jump" || !shortOk) {
+    jump_profile = "full";
+  }
+
+  const probabilities = parseProbabilities(
+    maneuver.block,
+    MANEUVERS,
+    action,
+    maneuver.confidence,
+  );
+  const presses = maneuverToPresses(action);
   return {
     action,
-    jump_now,
-    duck_now,
-    confidence: Math.max(jump_now, duck_now, 1 - Math.max(jump_now, duck_now)),
+    jump_profile,
+    confidence: maneuver.confidence,
+    probabilities,
+    press_jump: presses.press_jump,
+    press_duck: presses.press_duck,
+    obstacle_id: state.obstacle.id,
   };
 }
 
@@ -70,57 +164,24 @@ export async function decideWithJev(
   signal?: AbortSignal,
 ): Promise<DecideResponse> {
   const start = performance.now();
-  const next = state.upcoming[0];
   const result = await ai.run(
     "typesafe/jev",
     {
-      state: {
-        ...state,
-        decision_hint: next
-          ? {
-              nearest: next.type,
-              clearance: next.clearance,
-              time_to_impact_seconds: Number(next.time_to_impact.toFixed(3)),
-              jump_lead_seconds: Number(
-                jumpLeadSeconds(next.width, state.speed).toFixed(3),
-              ),
-              duck_lead_seconds: Number(
-                duckLeadSeconds(state.speed).toFixed(3),
-              ),
-              grounded: state.dino.grounded,
-            }
-          : null,
-      },
-      questions: {
-        jump_now: {
-          type: "noul",
-          instructions:
-            "Decide if the dinosaur should JUMP RIGHT NOW. Use decision_hint. If grounded is true, clearance is jump or either, and time_to_impact_seconds <= jump_lead_seconds (and > 0), return a high probability (>= 0.8). If time_to_impact_seconds is still much larger than jump_lead_seconds, return low probability. If clearance is duck, return near 0.",
-          criteria: {
-            true: "Inside the jump window now — jump immediately.",
-            false: "Not a jump moment — too early, too late, airborne, or must duck.",
-          },
-        },
-        duck_now: {
-          type: "noul",
-          instructions:
-            "Decide if the dinosaur should DUCK RIGHT NOW. Use decision_hint. If clearance is duck and time_to_impact_seconds <= duck_lead_seconds (and > 0), return high probability (>= 0.8). Otherwise return near 0.",
-          criteria: {
-            true: "High bird in the duck window — duck immediately.",
-            false: "Do not duck.",
-          },
-        },
-      },
+      state: buildManeuverState(state),
+      questions: buildManeuverQuestions(),
     },
     {
       signal: AbortSignal.any([
-        AbortSignal.timeout(2500),
+        AbortSignal.timeout(JEV_SERVER_TIMEOUT_MS),
         ...(signal ? [signal] : []),
       ]),
     },
   );
-  const durationMs = performance.now() - start;
-  return { ...parseDecideResponse(result), durationMs, source: "jev" };
+  return {
+    ...parseDecideResponse(result, state),
+    durationMs: performance.now() - start,
+    source: "jev",
+  };
 }
 
 export function publicError(error: unknown): {
@@ -132,5 +193,3 @@ export function publicError(error: unknown): {
   }
   return { status: 500, message: "Something went wrong. Try again." };
 }
-
-export { heuristicDecide, pickAction };

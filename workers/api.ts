@@ -1,14 +1,16 @@
 import {
-  clearanceFor,
+  birdAltitude,
+  flightPathFor,
+  toGroup,
+  toSemanticKind,
+  type DecideResponse,
   type DecideState,
+  type DinosaurMotion,
+  type NextObstacleContext,
+  type ObstacleDecisionState,
   type ObstacleKind,
 } from "../app/lib/jev-contract";
-import {
-  ApiError,
-  decideWithJev,
-  heuristicDecide,
-  publicError,
-} from "./ai";
+import { ApiError, decideWithJev, publicError } from "./ai";
 
 const json = (body: unknown, status = 200) =>
   Response.json(body, {
@@ -20,6 +22,7 @@ const json = (body: unknown, status = 200) =>
   });
 
 const kinds: ObstacleKind[] = ["cactus-small", "cactus-large", "bird"];
+const motions: DinosaurMotion[] = ["running", "jumping", "ducking"];
 
 async function limitedBody(request: Request, limit: number): Promise<Uint8Array> {
   if (Number(request.headers.get("content-length")) > limit) {
@@ -52,81 +55,124 @@ async function limitedBody(request: Request, limit: number): Promise<Uint8Array>
   return bytes;
 }
 
+function parseObstacle(
+  raw: Record<string, unknown>,
+  label: string,
+): ObstacleDecisionState & {
+  type: ObstacleKind;
+  size: number;
+  y: number;
+  bird_altitude?: "high" | "mid" | "low";
+} {
+  const type =
+    raw.type === "cactus-small" ||
+    raw.type === "cactus-large" ||
+    raw.type === "bird"
+      ? (raw.type as ObstacleKind)
+      : raw.kind === "small_cactus"
+        ? "cactus-small"
+        : raw.kind === "large_cactus"
+          ? "cactus-large"
+          : raw.kind === "pterodactyl"
+            ? "bird"
+            : null;
+  if (!type || !kinds.includes(type)) {
+    throw new ApiError(400, `Invalid ${label} type.`);
+  }
+  if (typeof raw.id !== "string" || !raw.id) {
+    throw new ApiError(400, `${label} needs an id.`);
+  }
+  const size = typeof raw.size === "number" ? raw.size : 1;
+  const width =
+    typeof raw.width_px === "number"
+      ? raw.width_px
+      : typeof raw.width === "number"
+        ? raw.width
+        : 17;
+  const y = typeof raw.y === "number" ? raw.y : 100;
+  const alt =
+    type === "bird"
+      ? raw.bird_altitude === "high" ||
+        raw.bird_altitude === "mid" ||
+        raw.bird_altitude === "low"
+        ? raw.bird_altitude
+        : birdAltitude(y)
+      : undefined;
+
+  return {
+    id: raw.id,
+    type,
+    size,
+    y,
+    bird_altitude: alt,
+    kind: toSemanticKind(type),
+    group: toGroup(size),
+    flight_path: flightPathFor(type, alt),
+    width_px: Math.round(width),
+  };
+}
+
+function parseNextObstacle(
+  raw: unknown,
+  speed: number,
+): NextObstacleContext | null {
+  if (raw == null) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ApiError(400, "Invalid next_obstacle.");
+  }
+  const value = raw as Record<string, unknown>;
+  const parsed = parseObstacle(value, "next_obstacle");
+  const gap_px =
+    typeof value.gap_px === "number" && Number.isFinite(value.gap_px)
+      ? Math.max(0, Math.round(value.gap_px))
+      : 0;
+  const seconds_until_next =
+    typeof value.seconds_until_next === "number" &&
+    Number.isFinite(value.seconds_until_next)
+      ? Math.max(0, value.seconds_until_next)
+      : gap_px / Math.max(speed * 60, 0.1);
+
+  return {
+    id: parsed.id,
+    kind: parsed.kind,
+    group: parsed.group,
+    flight_path: parsed.flight_path,
+    width_px: parsed.width_px,
+    gap_px,
+    seconds_until_next,
+  };
+}
+
 function parseState(raw: Record<string, unknown>): DecideState {
-  const dino = raw.dino;
-  const upcoming = raw.upcoming;
+  const obstacle = raw.obstacle;
   if (
-    typeof raw.t !== "number" ||
     typeof raw.speed !== "number" ||
-    !dino ||
-    typeof dino !== "object" ||
-    Array.isArray(dino) ||
-    !Array.isArray(upcoming)
+    !obstacle ||
+    typeof obstacle !== "object" ||
+    Array.isArray(obstacle)
   ) {
     throw new ApiError(400, "Invalid game state.");
   }
-  const d = dino as Record<string, unknown>;
-  if (
-    typeof d.y !== "number" ||
-    typeof d.vy !== "number" ||
-    typeof d.ducking !== "boolean" ||
-    typeof d.grounded !== "boolean"
-  ) {
-    throw new ApiError(400, "Invalid dino state.");
-  }
-  if (upcoming.length > 3) throw new ApiError(400, "Too many obstacles.");
 
-  const px_per_sec =
-    typeof raw.px_per_sec === "number" && raw.px_per_sec > 0
-      ? raw.px_per_sec
-      : Math.max(raw.speed, 0.1) * 60;
+  const motion =
+    typeof raw.dinosaur_motion === "string" &&
+    motions.includes(raw.dinosaur_motion as DinosaurMotion)
+      ? (raw.dinosaur_motion as DinosaurMotion)
+      : "running";
 
-  const parsedUpcoming: DecideState["upcoming"] = [];
-  for (const item of upcoming) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      throw new ApiError(400, "Invalid obstacle.");
-    }
-    const o = item as Record<string, unknown>;
-    if (
-      !kinds.includes(o.type as ObstacleKind) ||
-      typeof o.dx !== "number" ||
-      typeof o.width !== "number" ||
-      typeof o.height !== "number" ||
-      typeof o.y !== "number"
-    ) {
-      throw new ApiError(400, "Invalid obstacle fields.");
-    }
-    const type = o.type as ObstacleKind;
-    const time_to_impact =
-      typeof o.time_to_impact === "number"
-        ? o.time_to_impact
-        : o.dx / px_per_sec;
-    parsedUpcoming.push({
-      type,
-      dx: o.dx,
-      width: o.width,
-      height: o.height,
-      y: o.y,
-      time_to_impact,
-      clearance:
-        o.clearance === "jump" ||
-        o.clearance === "duck" ||
-        o.clearance === "either"
-          ? o.clearance
-          : clearanceFor(type, o.y),
-    });
-  }
+  const parsed = parseObstacle(obstacle as Record<string, unknown>, "obstacle");
+
   return {
-    t: raw.t,
     speed: raw.speed,
-    px_per_sec,
-    dino: {
-      y: d.y,
-      vy: d.vy,
-      ducking: d.ducking,
-      grounded: d.grounded,
+    dinosaur_motion: motion,
+    obstacle: {
+      id: parsed.id,
+      kind: parsed.kind,
+      group: parsed.group,
+      flight_path: parsed.flight_path,
+      width_px: parsed.width_px,
     },
-    upcoming: parsedUpcoming,
+    next_obstacle: parseNextObstacle(raw.next_obstacle, raw.speed),
   };
 }
 
@@ -138,7 +184,7 @@ export async function handleApi(
   try {
     if (url.pathname === "/api/jev-decide" && request.method === "POST") {
       const value: unknown = JSON.parse(
-        new TextDecoder().decode(await limitedBody(request, 4096)),
+        new TextDecoder().decode(await limitedBody(request, 8_192)),
       );
       if (!value || typeof value !== "object" || Array.isArray(value)) {
         throw new ApiError(400, "Please send JSON.");
@@ -149,8 +195,26 @@ export async function handleApi(
         return json(decision);
       } catch (error) {
         console.error("jev decide failed", error);
-        const fallback = heuristicDecide(state);
-        return json({ ...fallback, durationMs: 0 });
+        const { status, message } = publicError(error);
+        return json(
+          {
+            action: "keep_running" as const,
+            jump_profile: "full" as const,
+            confidence: 0,
+            probabilities: {
+              jump: 0,
+              duck: 0,
+              keep_running: 0,
+            },
+            press_jump: 0,
+            press_duck: 0,
+            durationMs: 0,
+            source: "none" as const,
+            obstacle_id: state.obstacle.id,
+            error: message,
+          } satisfies DecideResponse & { error: string },
+          status >= 500 ? 502 : status,
+        );
       }
     }
 

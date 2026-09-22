@@ -5,14 +5,43 @@ export const LANE_GAP = 18;
 export const BOTTOM_PAD = 10;
 
 export const GAME_DURATION_MS = 60_000;
+/**
+ * After the player crashes, keep Jev running this long (wall-clock).
+ * Spectate uses a boosted speed ramp + difficulty clock so the level
+ * packs a late-race stretch into a short watch window.
+ */
+export const SPECTATE_MS = 12_000;
+/** Floor speed once you're watching — skip the slow early crawl. */
+export const SPECTATE_MIN_SPEED = 10;
+/** How much faster speed accelerates during spectate (vs normal race). */
+export const SPECTATE_ACCEL_MULT = 14;
+/** How much faster the difficulty/elapsed clock runs while spectating. */
+export const SPECTATE_ELAPSED_MULT = 3;
 
-/** Base Chromium-like speeds; our curve multiplies these aggressively. */
+/** Base Chromium speed; acceleration lives in speedCurve.ts. */
 export const BASE_SPEED = 6;
 export const GRAVITY = 0.6;
 export const INITIAL_JUMP_VELOCITY = 12;
 export const SPEED_DROP_COEFFICIENT = 3;
 
 export const CLEAR_TIME_MS = 4000;
+/**
+ * Extra off-screen runway (in seconds of travel at current speed) before an
+ * obstacle reaches the visible canvas. Jev is asked as soon as the obstacle is
+ * created, so this is the main lever for Workers AI latency.
+ */
+export const JEV_ASK_LEAD_SECONDS = 3.5;
+/** Max obstacles waiting off-screen (keeps the decide queue from stampeding AI). */
+export const JEV_MAX_OFFSCREEN = 3;
+/** Browser fetch budget for /api/jev-decide (must exceed server AI timeout). */
+export const JEV_CLIENT_TIMEOUT_MS = 8_000;
+/** Workers AI abort budget inside the decide handler. */
+export const JEV_SERVER_TIMEOUT_MS = 7_000;
+/**
+ * If the next obstacle is still unknown, wait to ask until this many seconds
+ * remain before the action proximity threshold — then ask with next=null.
+ */
+export const JEV_ASK_DEADLINE_SECONDS = 1.6;
 
 export const SPRITE_LDPI = {
   CACTUS_LARGE: { x: 332, y: 2 },
@@ -40,7 +69,7 @@ export const TREX_FRAMES = {
   RUNNING: { frames: [88, 132], msPerFrame: 1000 / 12 },
   CRASHED: { frames: [220], msPerFrame: 1000 / 60 },
   JUMPING: { frames: [0], msPerFrame: 1000 / 60 },
-  DUCKING: { frames: [264, 323], msPerFrame: 1000 / 8 },
+  DUCKING: { frames: [264, 323], msPerFrame: 1000 / 12 },
 } as const;
 
 export type Box = { x: number; y: number; width: number; height: number };
@@ -78,7 +107,8 @@ export const OBSTACLE_TYPES: ObstacleTypeConfig[] = [
     kind: "cactus-small",
     width: 17,
     height: 35,
-    yPos: 105,
+    // Chromium uses 105; +3 plants the art on the ground line (sprite bottom pad).
+    yPos: 108,
     multipleSpeed: 4,
     minGap: 120,
     minSpeed: 0,
@@ -93,7 +123,8 @@ export const OBSTACLE_TYPES: ObstacleTypeConfig[] = [
     kind: "cactus-large",
     width: 25,
     height: 50,
-    yPos: 90,
+    // Chromium uses 90; +3 matches small-cactus plant offset.
+    yPos: 93,
     multipleSpeed: 7,
     minGap: 120,
     minSpeed: 0,
@@ -110,7 +141,7 @@ export const OBSTACLE_TYPES: ObstacleTypeConfig[] = [
     height: 40,
     yPos: [100, 75, 50],
     multipleSpeed: 999,
-    minSpeed: 7,
+    minSpeed: 8.5,
     minGap: 150,
     collisionBoxes: [
       { x: 15, y: 15, width: 16, height: 5 },

@@ -5,16 +5,23 @@ import {
   GAME_DURATION_MS,
   LANE_GAP,
   LANE_HEIGHT,
-  TREX,
+  SPECTATE_ACCEL_MULT,
+  SPECTATE_ELAPSED_MULT,
+  SPECTATE_MIN_SPEED,
+  SPECTATE_MS,
 } from "./constants";
 import { Dino } from "./dino";
 import { CloudField, HorizonLine } from "./horizon";
-import { JevController } from "./jevController";
+import { JevController, type JevIoStatus, type JevSnapshot } from "./jevController";
 import { ObstacleManager } from "./obstacles";
-import { speedMultiplier } from "./speedCurve";
-import type { DecideResponse, JevAction } from "../lib/jev-contract";
+import { MAX_SPEED, stepSpeed } from "./speedCurve";
+import type {
+  DecideResponse,
+  DinosaurMotion,
+  JevAskView,
+} from "../lib/jev-contract";
 
-export type RacePhase = "idle" | "playing" | "ended";
+export type RacePhase = "idle" | "playing" | "spectating" | "ended";
 export type Winner = "you" | "jev" | "tie" | null;
 
 export type RaceSnapshot = {
@@ -27,6 +34,11 @@ export type RaceSnapshot = {
   youDistance: number;
   jevDistance: number;
   lastJev: DecideResponse | null;
+  lastJevAsk: JevAskView | null;
+  jevIoStatus: JevIoStatus;
+  jevIoError: string | null;
+  /** Seconds left in the watch-Jev window (spectating only). */
+  spectateLeftMs: number;
 };
 
 export type RaceCallbacks = {
@@ -54,6 +66,12 @@ export class RaceGame {
   jevDistance = 0;
   winner: Winner = null;
   lastJev: DecideResponse | null = null;
+  lastJevAsk: JevAskView | null = null;
+  jevIoStatus: JevIoStatus = "idle";
+  jevIoError: string | null = null;
+  private spectateElapsedMs = 0;
+  /** Frozen bitmap of the YOU lane after crash (spectate / ended). */
+  private youFreeze: HTMLCanvasElement | null = null;
   private raf = 0;
   private lastTime = 0;
   private keys = new Set<string>();
@@ -72,12 +90,14 @@ export class RaceGame {
     this.sprite = sprite;
     this.callbacks = callbacks;
     this.you = new Dino("YOU");
-    this.jev = new Dino("JEV", "sepia(0.35) hue-rotate(160deg) saturate(1.4)");
+    this.jev = new Dino("JEV");
     this.jevController = new JevController({
-      getState: () => this.buildJevState(),
-      onDecision: (decision) => {
-        this.lastJev = decision;
-        this.applyJevAction(decision.action);
+      getSnapshot: () => this.buildJevSnapshot(),
+      onIo: ({ status, ask, decision, error }) => {
+        this.jevIoStatus = status;
+        this.jevIoError = error ?? null;
+        this.lastJevAsk = ask;
+        if (decision) this.lastJev = decision;
         this.emit();
       },
     });
@@ -89,6 +109,10 @@ export class RaceGame {
 
   get height() {
     return LANE_HEIGHT * 2 + LANE_GAP;
+  }
+
+  private get live() {
+    return this.phase === "playing" || this.phase === "spectating";
   }
 
   resize() {
@@ -144,6 +168,11 @@ export class RaceGame {
       this.start();
       return;
     }
+    // Spectating: Space/Enter skips to the result screen.
+    if (this.phase === "spectating" && (event.code === "Enter" || event.code === "Space")) {
+      this.finish(this.winner ?? "jev");
+      return;
+    }
     if (this.phase !== "playing") return;
 
     if (event.code === "Space" || event.code === "ArrowUp") {
@@ -176,6 +205,10 @@ export class RaceGame {
   }
 
   pressDuck(down: boolean) {
+    if (this.phase === "idle" || this.phase === "ended") {
+      if (down) this.start();
+      return;
+    }
     if (this.phase !== "playing") return;
     this.duckHeld = down;
     this.you.setDuck(down);
@@ -186,11 +219,17 @@ export class RaceGame {
     this.phase = "playing";
     this.elapsedMs = 0;
     this.clearTimer = 0;
+    this.spectateElapsedMs = 0;
+    this.youFreeze = null;
     this.speed = BASE_SPEED;
     this.winner = null;
     this.youDistance = 0;
     this.jevDistance = 0;
     this.lastJev = null;
+    this.lastJevAsk = null;
+    this.jevIoStatus = "idle";
+    this.jevIoError = null;
+    this.duckHeld = false;
     this.you.startRunning();
     this.jev.startRunning();
     this.jevController.start();
@@ -208,103 +247,97 @@ export class RaceGame {
     this.cloudsJev.reset();
   }
 
-  private startLoop() {
-    this.stopLoop();
-    this.lastTime = performance.now();
-    const frame = (now: number) => {
-      const delta = Math.min(now - this.lastTime, 50);
-      this.lastTime = now;
-      this.update(delta);
-      this.draw();
-      if (this.phase === "playing") {
-        this.raf = requestAnimationFrame(frame);
-      }
-    };
-    this.raf = requestAnimationFrame(frame);
-  }
-
-  private stopLoop() {
-    if (this.raf) cancelAnimationFrame(this.raf);
-    this.raf = 0;
-  }
-
-  private buildJevState() {
-    if (this.phase !== "playing" || this.jev.crashed) return null;
-    const px_per_sec = Math.max(this.speed, 0.1) * 60;
-    const upcoming = this.obstacles.upcomingFor(TREX.START_X).map((o) => {
-      const clearance =
-        o.type === "bird" && o.y < 85
-          ? ("duck" as const)
-          : o.type === "bird"
-            ? ("either" as const)
-            : ("jump" as const);
-      return {
-        ...o,
-        time_to_impact: o.dx / px_per_sec,
-        clearance,
-      };
-    });
+  /** Snapshot for per-obstacle Jev planning (ref: jev-t-rex-runner). */
+  private buildJevSnapshot(): JevSnapshot | null {
+    if (!this.live || this.jev.crashed) return null;
+    const dinosaurMotion: DinosaurMotion = this.jev.jumping
+      ? "jumping"
+      : this.jev.ducking
+        ? "ducking"
+        : "running";
     return {
-      t: this.elapsedMs / 1000,
+      playing: this.live,
+      crashed: this.jev.crashed,
       speed: this.speed,
-      px_per_sec,
-      dino: {
-        y: this.jev.yPos,
-        vy: this.jev.jumpVelocity,
-        ducking: this.jev.ducking,
-        grounded: this.jev.grounded,
-      },
-      upcoming,
+      dinosaurMotion,
+      dinosaurX: this.jev.xPos,
+      obstacles: this.obstacles.obstacles,
     };
-  }
-
-  private applyJevAction(action: JevAction) {
-    if (this.jev.crashed || this.phase !== "playing") return;
-    if (action === "jump") {
-      this.jev.setDuck(false);
-      this.jev.jump();
-    } else if (action === "duck") {
-      this.jev.setDuck(true);
-    } else {
-      this.jev.setDuck(false);
-      this.jev.endJump();
-    }
   }
 
   private update(deltaTime: number) {
-    if (this.phase !== "playing") return;
+    if (!this.live) return;
 
-    this.elapsedMs += deltaTime;
+    const spectating = this.phase === "spectating";
+    // After you crash, pack late-race difficulty into a short watch window.
+    // Boost speed + difficulty clock only — dino physics stay on real deltaTime
+    // so jump arcs still look right; proximity timing uses the higher speed.
+    const difficultyDt = spectating
+      ? deltaTime * SPECTATE_ELAPSED_MULT
+      : deltaTime;
+    const speedDt = spectating ? deltaTime * SPECTATE_ACCEL_MULT : deltaTime;
+
+    this.elapsedMs += difficultyDt;
     this.clearTimer += deltaTime;
-    this.speed = BASE_SPEED * speedMultiplier(this.elapsedMs);
+    if (spectating) this.spectateElapsedMs += deltaTime;
+    // Chromium-style: nudge speed every frame toward MAX_SPEED.
+    this.speed = stepSpeed(this.speed, speedDt);
+    if (spectating) {
+      this.speed = Math.min(MAX_SPEED, Math.max(this.speed, SPECTATE_MIN_SPEED));
+    }
 
     if (this.clearTimer > CLEAR_TIME_MS) {
       this.obstacles.update(deltaTime, this.speed, this.elapsedMs);
     }
 
-    this.horizonYou.update(deltaTime, this.speed);
+    // YOU lane freezes on crash; only Jev's world keeps scrolling.
+    if (this.phase === "playing") {
+      this.horizonYou.update(deltaTime, this.speed);
+      this.cloudsYou.update(deltaTime, this.speed);
+    }
     this.horizonJev.update(deltaTime, this.speed);
-    this.cloudsYou.update(deltaTime, this.speed);
     this.cloudsJev.update(deltaTime, this.speed);
 
-    if (!this.you.crashed) {
-      this.you.update(deltaTime);
+    if (this.phase === "playing" && !this.you.crashed) {
+      // Apply duck before physics so mid-air slam starts this frame.
       if (this.duckHeld) this.you.setDuck(true);
+      this.you.update(deltaTime);
       this.youDistance += this.speed * deltaTime * 0.1;
     }
+
     if (!this.jev.crashed) {
-      this.jev.update(deltaTime);
-      // Re-apply duck if last action was duck and still needed
-      if (this.jevController.action === "duck" && this.jev.grounded) {
+      // Controller owns one maneuver per obstacle + proximity timing.
+      // Jump / duck are independent keys (Chromium-style).
+      const { jump: jumpKey, duck: duckKey, jumpProfile } =
+        this.jevController.keys;
+      const jumpHeld = jumpKey >= 0.45;
+      const duckHeld = duckKey >= 0.45;
+
+      if (this.jev.jumping) {
+        this.jev.setDuck(duckHeld);
+      } else if (duckHeld) {
         this.jev.setDuck(true);
+      } else {
+        this.jev.setDuck(false);
+        if (jumpHeld) this.jev.jump(jumpProfile);
       }
+
+      this.jev.update(deltaTime);
       this.jevDistance += this.speed * deltaTime * 0.1;
+    } else {
+      this.jev.update(deltaTime);
     }
 
     // Collisions against shared obstacle geometry
     for (const obstacle of this.obstacles.obstacles) {
       const boxes = obstacle.boxes();
-      if (!this.you.crashed && this.you.collides(boxes)) this.you.crash();
+      if (
+        this.phase === "playing" &&
+        !this.you.crashed &&
+        this.you.collides(boxes)
+      ) {
+        this.you.crash();
+      }
       if (!this.jev.crashed && this.jev.collides(boxes)) this.jev.crash();
     }
 
@@ -312,11 +345,46 @@ export class RaceGame {
     this.emit();
   }
 
+  private beginSpectate() {
+    this.phase = "spectating";
+    this.winner = "jev";
+    this.spectateElapsedMs = 0;
+    this.duckHeld = false;
+    // Skip the early crawl — jump straight into a fast showcase stretch.
+    this.speed = Math.min(MAX_SPEED, Math.max(this.speed, SPECTATE_MIN_SPEED));
+    this.captureYouLane();
+    this.emit();
+  }
+
+  /** Snapshot the YOU lane so it stays a still frame while Jev keeps running. */
+  private captureYouLane() {
+    const freeze = document.createElement("canvas");
+    freeze.width = DEFAULT_WIDTH;
+    freeze.height = LANE_HEIGHT;
+    const ctx = freeze.getContext("2d");
+    if (!ctx) return;
+    ctx.fillStyle = "#f7f7f7";
+    ctx.fillRect(0, 0, DEFAULT_WIDTH, LANE_HEIGHT);
+    this.cloudsYou.draw(ctx, this.sprite, 0);
+    this.horizonYou.draw(ctx, this.sprite, 0);
+    this.obstacles.draw(ctx, this.sprite, 0);
+    this.you.draw(ctx, this.sprite, 0);
+    this.youFreeze = freeze;
+  }
+
   private resolveEnd() {
+    if (this.phase === "spectating") {
+      if (this.jev.crashed || this.spectateElapsedMs >= SPECTATE_MS) {
+        this.finish("jev");
+      }
+      return;
+    }
+
     if (this.phase !== "playing") return;
 
     if (this.you.crashed && !this.jev.crashed) {
-      this.finish("jev");
+      // You lost — keep the camera on Jev for a showcase stretch.
+      this.beginSpectate();
       return;
     }
     if (this.jev.crashed && !this.you.crashed) {
@@ -324,7 +392,6 @@ export class RaceGame {
       return;
     }
     if (this.you.crashed && this.jev.crashed) {
-      // Same-frame double crash → tie
       this.finish("tie");
       return;
     }
@@ -332,6 +399,24 @@ export class RaceGame {
       if (this.youDistance === this.jevDistance) this.finish("tie");
       else this.finish(this.youDistance > this.jevDistance ? "you" : "jev");
     }
+  }
+
+  private startLoop() {
+    this.stopLoop();
+    this.lastTime = performance.now();
+    const tick = (now: number) => {
+      const delta = Math.min(50, now - this.lastTime);
+      this.lastTime = now;
+      this.update(delta);
+      this.draw();
+      if (this.live) this.raf = requestAnimationFrame(tick);
+    };
+    this.raf = requestAnimationFrame(tick);
+  }
+
+  private stopLoop() {
+    if (this.raf) cancelAnimationFrame(this.raf);
+    this.raf = 0;
   }
 
   private finish(winner: Winner) {
@@ -354,6 +439,13 @@ export class RaceGame {
       youDistance: this.youDistance,
       jevDistance: this.jevDistance,
       lastJev: this.lastJev,
+      lastJevAsk: this.lastJevAsk,
+      jevIoStatus: this.jevIoStatus,
+      jevIoError: this.jevIoError,
+      spectateLeftMs:
+        this.phase === "spectating"
+          ? Math.max(0, SPECTATE_MS - this.spectateElapsedMs)
+          : 0,
     });
   }
 
@@ -373,25 +465,15 @@ export class RaceGame {
 
   draw() {
     this.ctx.clearRect(0, 0, DEFAULT_WIDTH, this.height);
-    this.drawLane(0, this.you, this.horizonYou, this.cloudsYou);
+    if (this.youFreeze) {
+      this.ctx.drawImage(this.youFreeze, 0, 0);
+    } else {
+      this.drawLane(0, this.you, this.horizonYou, this.cloudsYou);
+    }
     this.drawLane(LANE_HEIGHT + LANE_GAP, this.jev, this.horizonJev, this.cloudsJev);
 
     // Divider
     this.ctx.fillStyle = "#e4e1db";
     this.ctx.fillRect(0, LANE_HEIGHT, DEFAULT_WIDTH, LANE_GAP);
-
-    if (this.phase === "idle") {
-      this.ctx.fillStyle = "rgba(247,247,247,0.72)";
-      this.ctx.fillRect(0, 0, DEFAULT_WIDTH, this.height);
-      this.ctx.fillStyle = "#191919";
-      this.ctx.font = "600 16px Arial, Helvetica, sans-serif";
-      this.ctx.textAlign = "center";
-      this.ctx.fillText(
-        "Tap or press space to race Jev",
-        DEFAULT_WIDTH / 2,
-        this.height / 2,
-      );
-      this.ctx.textAlign = "start";
-    }
   }
 }

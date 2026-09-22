@@ -13,6 +13,13 @@ import { boxesOverlap } from "./collision";
 
 export type DinoStatus = "WAITING" | "RUNNING" | "JUMPING" | "DUCKING" | "CRASHED";
 
+/**
+ * Chromium T-rex duck behavior (offline.js):
+ * - Grounded: switch to DUCKING sprite/hitbox immediately.
+ * - Mid-air: setSpeedDrop() — jumpVelocity = 1, fall 3× fast, then duck on land.
+ */
+export type JumpProfile = "short" | "full";
+
 export class Dino {
   xPos = TREX.START_X;
   yPos = 0;
@@ -22,6 +29,8 @@ export class Dino {
   ducking = false;
   speedDrop = false;
   reachedMinHeight = false;
+  /** short = cut ascent at min height (jev-t-rex-runner); full = full arc. */
+  jumpProfile: JumpProfile = "full";
   status: DinoStatus = "WAITING";
   crashed = false;
   currentFrame = 0;
@@ -30,7 +39,10 @@ export class Dino {
   animFrames: readonly number[] = TREX_FRAMES.WAITING.frames;
   minJumpHeight = 0;
   label: string;
+  /** Fill used to recolor the sprite (null = original grey). */
   tint: string | null;
+  private tintCanvas: HTMLCanvasElement | null = null;
+  private tintCtx: CanvasRenderingContext2D | null = null;
 
   constructor(label: string, tint: string | null = null) {
     this.label = label;
@@ -48,6 +60,7 @@ export class Dino {
     this.ducking = false;
     this.speedDrop = false;
     this.reachedMinHeight = false;
+    this.jumpProfile = "full";
     this.crashed = false;
     this.status = "WAITING";
     this.currentFrame = 0;
@@ -69,16 +82,18 @@ export class Dino {
     this.setStatus("RUNNING");
   }
 
-  jump() {
-    if (this.crashed || this.jumping) return;
+  jump(profile: JumpProfile = "full") {
+    if (this.crashed || this.jumping) return false;
     this.setStatus("JUMPING");
-    this.jumpVelocity = TREX.INITIAL_JUMP_VELOCITY - 1; // slight extra loft vs stock -10
+    this.jumpVelocity = TREX.INITIAL_JUMP_VELOCITY; // -10, airtime ~0.58s
     this.jumping = true;
     this.reachedMinHeight = false;
+    this.jumpProfile = profile === "short" ? "short" : "full";
     this.speedDrop = false;
     if (this.ducking) {
       this.ducking = false;
     }
+    return true;
   }
 
   endJump() {
@@ -90,11 +105,25 @@ export class Dino {
     }
   }
 
+  /** Immediately cancel jump and slam down — no hover / slow-fall before crouch. */
+  setSpeedDrop() {
+    this.speedDrop = true;
+    // Chromium uses 1; that feels like a pause mid-air. Push harder so the
+    // body drops in a few frames, then crouch on land.
+    this.jumpVelocity = 8;
+    this.reachedMinHeight = true;
+  }
+
   setDuck(isDucking: boolean) {
-    if (this.crashed || this.jumping) {
-      if (isDucking) this.speedDrop = true;
+    if (this.crashed) return;
+
+    // Mid-air duck = fast fall, not crouch pose (still airborne).
+    if (this.jumping) {
+      if (isDucking) this.setSpeedDrop();
+      else this.speedDrop = false;
       return;
     }
+
     if (isDucking && this.status !== "DUCKING") {
       this.ducking = true;
       this.setStatus("DUCKING");
@@ -114,27 +143,50 @@ export class Dino {
       this.timer = 0;
     }
 
+    if (this.jumping) {
+      this.updateJump(deltaTime);
+    }
+
+    // After a speed-drop landing, crouch if duck is still held (race re-applies).
+    if (this.speedDrop && this.yPos === this.groundYPos) {
+      this.speedDrop = false;
+      this.setDuck(true);
+    }
+  }
+
+  /** Chromium Trex.updateJump — gravity always; speedDrop multiplies fall. */
+  private updateJump(deltaTime: number) {
+    const framesElapsed = deltaTime / (1000 / 60);
+
     if (this.speedDrop) {
+      // Fall only — never re-apply endJump/-5 which can fight the slam.
       this.yPos += Math.round(
-        this.jumpVelocity * SPEED_DROP_COEFFICIENT * (deltaTime / (1000 / 60)),
+        this.jumpVelocity * SPEED_DROP_COEFFICIENT * framesElapsed,
       );
-    } else if (this.jumping) {
-      this.yPos += Math.round(this.jumpVelocity * (deltaTime / (1000 / 60)));
-      this.jumpVelocity += GRAVITY * (deltaTime / (1000 / 60));
-      if (this.yPos > this.minJumpHeight) {
+      this.jumpVelocity += GRAVITY * 1.5 * framesElapsed;
+      this.reachedMinHeight = true;
+    } else {
+      this.yPos += Math.round(this.jumpVelocity * framesElapsed);
+      this.jumpVelocity += GRAVITY * framesElapsed;
+      if (this.yPos < this.minJumpHeight) {
         this.reachedMinHeight = true;
+      }
+      // Short profile: cut ascent once min height is cleared (ref: jev-t-rex-runner).
+      if (this.jumpProfile === "short" && this.reachedMinHeight) {
+        this.endJump();
       }
     }
 
     if (this.yPos > this.groundYPos) {
       this.yPos = this.groundYPos;
       this.jumping = false;
-      this.speedDrop = false;
       this.jumpVelocity = 0;
+      this.jumpProfile = "full";
       if (!this.crashed) {
         if (this.ducking) this.setStatus("DUCKING");
         else this.setStatus("RUNNING");
       }
+      // Leave speedDrop set so the grounded check can crouch this frame.
     }
   }
 
@@ -142,6 +194,7 @@ export class Dino {
     this.crashed = true;
     this.jumping = false;
     this.ducking = false;
+    this.speedDrop = false;
     this.setStatus("CRASHED");
   }
 
@@ -177,38 +230,97 @@ export class Dino {
   ) {
     const frame = this.animFrames[this.currentFrame] ?? 0;
     const ducking = this.status === "DUCKING";
+    // Chromium: duck uses WIDTH_DUCK × HEIGHT (full cell; crouch is at the bottom).
     const sourceWidth = ducking ? TREX.WIDTH_DUCK : TREX.WIDTH;
-    const sourceHeight = ducking ? TREX.HEIGHT_DUCK : TREX.HEIGHT;
+    const sourceHeight = TREX.HEIGHT;
     const sourceX = SPRITE_LDPI.TREX.x + frame;
     const sourceY = SPRITE_LDPI.TREX.y;
-    const drawY =
-      laneOffsetY +
-      this.yPos +
-      (ducking ? TREX.HEIGHT - TREX.HEIGHT_DUCK : 0);
+    const drawY = laneOffsetY + this.yPos;
+
+    if (this.tint) {
+      this.drawTinted(
+        ctx,
+        sprite,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        this.xPos,
+        drawY,
+      );
+    } else {
+      ctx.drawImage(
+        sprite,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        this.xPos,
+        drawY,
+        sourceWidth,
+        sourceHeight,
+      );
+    }
 
     ctx.save();
-    if (this.tint) {
-      // Draw to offscreen-ish via globalComposite isn't trivial; use filter for distinction.
-      ctx.filter = this.tint;
+    ctx.fillStyle = this.tint ?? "#535353";
+    ctx.font = "600 10px Arial, Helvetica, sans-serif";
+    ctx.fillText(this.label, this.xPos, laneOffsetY + this.yPos - 6);
+    ctx.restore();
+  }
+
+  /** Fill the dino body with tint; keep the same sprite silhouette. */
+  private drawTinted(
+    ctx: CanvasRenderingContext2D,
+    sprite: HTMLImageElement,
+    sourceX: number,
+    sourceY: number,
+    sourceWidth: number,
+    sourceHeight: number,
+    destX: number,
+    destY: number,
+  ) {
+    if (!this.tintCanvas || !this.tintCtx) {
+      this.tintCanvas = document.createElement("canvas");
+      this.tintCtx = this.tintCanvas.getContext("2d");
     }
-    ctx.drawImage(
+    const tctx = this.tintCtx;
+    if (!tctx || !this.tint) {
+      ctx.drawImage(
+        sprite,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        destX,
+        destY,
+        sourceWidth,
+        sourceHeight,
+      );
+      return;
+    }
+
+    this.tintCanvas.width = sourceWidth;
+    this.tintCanvas.height = sourceHeight;
+    tctx.clearRect(0, 0, sourceWidth, sourceHeight);
+    tctx.globalCompositeOperation = "source-over";
+    tctx.drawImage(
       sprite,
       sourceX,
       sourceY,
       sourceWidth,
       sourceHeight,
-      this.xPos,
-      drawY,
+      0,
+      0,
       sourceWidth,
       sourceHeight,
     );
-    ctx.restore();
-
-    ctx.save();
-    ctx.fillStyle = "#535353";
-    ctx.font = "600 10px Arial, Helvetica, sans-serif";
-    ctx.fillText(this.label, this.xPos, laneOffsetY + this.yPos - 6);
-    ctx.restore();
+    // Paint the opaque pixels green (body fill, not an outline).
+    tctx.globalCompositeOperation = "source-in";
+    tctx.fillStyle = this.tint;
+    tctx.fillRect(0, 0, sourceWidth, sourceHeight);
+    tctx.globalCompositeOperation = "source-over";
+    ctx.drawImage(this.tintCanvas, destX, destY);
   }
 
   get grounded() {
