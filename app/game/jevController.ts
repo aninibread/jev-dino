@@ -13,7 +13,6 @@ import {
   type DinosaurMotion,
   type JevAskView,
   type JumpProfile,
-  type Maneuver,
 } from "../lib/jev-contract";
 import { calculateActionProximityThreshold } from "../lib/timing";
 import type { Obstacle } from "./obstacles";
