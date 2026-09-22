@@ -1,5 +1,6 @@
 import {
   birdAltitude,
+  EMPTY_PROFILE_PROBABILITIES,
   flightPathFor,
   toGroup,
   toSemanticKind,
@@ -10,7 +11,12 @@ import {
   type ObstacleDecisionState,
   type ObstacleKind,
 } from "../app/lib/jev-contract";
-import { ApiError, decideWithJev, publicError } from "./ai";
+import {
+  ApiError,
+  decideJumpProfileWithJev,
+  decideManeuverWithJev,
+  publicError,
+} from "./ai";
 
 const json = (body: unknown, status = 200) =>
   Response.json(body, {
@@ -191,7 +197,7 @@ export async function handleApi(
       }
       const state = parseState(value as Record<string, unknown>);
       try {
-        const decision = await decideWithJev(env.AI, state);
+        const decision = await decideManeuverWithJev(env.AI, state);
         return json(decision);
       } catch (error) {
         console.error("jev decide failed", error);
@@ -206,6 +212,7 @@ export async function handleApi(
               duck: 0,
               keep_running: 0,
             },
+            profile_probabilities: { ...EMPTY_PROFILE_PROBABILITIES },
             press_jump: 0,
             press_duck: 0,
             durationMs: 0,
@@ -213,6 +220,38 @@ export async function handleApi(
             obstacle_id: state.obstacle.id,
             error: message,
           } satisfies DecideResponse & { error: string },
+          status >= 500 ? 502 : status,
+        );
+      }
+    }
+
+    if (url.pathname === "/api/jev-jump-profile" && request.method === "POST") {
+      const value: unknown = JSON.parse(
+        new TextDecoder().decode(await limitedBody(request, 8_192)),
+      );
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new ApiError(400, "Please send JSON.");
+      }
+      const state = parseState(value as Record<string, unknown>);
+      try {
+        const profile = await decideJumpProfileWithJev(env.AI, state);
+        return json(profile);
+      } catch (error) {
+        console.error("jev jump profile failed", error);
+        const { status, message } = publicError(error);
+        return json(
+          {
+            jump_profile: "full" as const,
+            profile_probabilities: {
+              short: 0,
+              full: 1,
+            },
+            confidence: 0,
+            durationMs: 0,
+            source: "none" as const,
+            obstacle_id: state.obstacle.id,
+            error: message,
+          },
           status >= 500 ? 502 : status,
         );
       }

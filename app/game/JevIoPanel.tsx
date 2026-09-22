@@ -1,5 +1,6 @@
 import {
   EMPTY_PROBABILITIES,
+  EMPTY_PROFILE_PROBABILITIES,
   TIGHT_NEXT_SECONDS,
   labelFlightPath,
   labelGroup,
@@ -8,14 +9,20 @@ import {
   labelMotion,
   type DecideResponse,
   type JevAskView,
+  type JumpProfile,
   type Maneuver,
 } from "../lib/jev-contract";
 import type { JevIoStatus } from "./jevController";
 
 const MANEUVERS: Maneuver[] = ["jump", "duck", "keep_running"];
+const PROFILES: JumpProfile[] = ["short", "full"];
 
 function pct(n: number): string {
   return `${Math.round(Math.min(1, Math.max(0, n)) * 100)}%`;
+}
+
+function labelProfile(profile: JumpProfile): string {
+  return profile === "short" ? "Short" : "Full";
 }
 
 function statusLabel(status: JevIoStatus): string {
@@ -132,6 +139,11 @@ export function JevIoPanel({
   // while the next ask is in flight.
   const probs = decision?.probabilities ?? EMPTY_PROBABILITIES;
   const chosen = decision?.action;
+  const profileProbs =
+    decision?.profile_probabilities ?? EMPTY_PROFILE_PROBABILITIES;
+  const chosenProfile =
+    decision?.action === "jump" ? decision.jump_profile : null;
+  const showProfileBars = decision?.action === "jump";
   const next = ask?.next_obstacle ?? null;
   const nextLabel = next
     ? `${labelKind(next.kind)} ${labelGroup(next.group)}`
@@ -141,8 +153,6 @@ export function JevIoPanel({
         next.seconds_until_next <= TIGHT_NEXT_SECONDS ? " tight" : ""
       }`
     : "–";
-  const profileLabel =
-    decision?.action === "jump" ? decision.jump_profile : "–";
 
   return (
     <section
@@ -222,12 +232,37 @@ export function JevIoPanel({
               );
             })}
           </ul>
-          <dl className="jev-io-facts">
-            <div>
-              <dt>Jump profile</dt>
-              <dd>{profileLabel}</dd>
-            </div>
-          </dl>
+          {showProfileBars ? (
+            <ul
+              className="jev-probs jev-probs-profile"
+              aria-label="Jump profile"
+            >
+              {PROFILES.map((key) => {
+                const value = profileProbs[key] ?? 0;
+                return (
+                  <li
+                    key={key}
+                    className={chosenProfile === key ? "is-chosen" : undefined}
+                  >
+                    <div className="jev-prob-label">
+                      <span>{labelProfile(key)}</span>
+                      <strong>{pct(value)}</strong>
+                    </div>
+                    <div
+                      className="jev-prob-track"
+                      role="presentation"
+                      aria-hidden="true"
+                    >
+                      <div
+                        className="jev-prob-fill"
+                        style={{ width: pct(value) }}
+                      />
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
         </div>
       </div>
     </section>

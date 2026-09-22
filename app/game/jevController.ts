@@ -6,6 +6,7 @@ import {
 import {
   CONFIDENCE_THRESHOLD,
   EMPTY_PROBABILITIES,
+  EMPTY_PROFILE_PROBABILITIES,
   birdAltitude,
   flightPathFor,
   toGroup,
@@ -14,6 +15,7 @@ import {
   type DinosaurMotion,
   type JevAskView,
   type JumpProfile,
+  type JumpProfileProbabilities,
 } from "../lib/jev-contract";
 import { calculateActionProximityThreshold } from "../lib/timing";
 import type { Obstacle } from "./obstacles";
@@ -411,12 +413,56 @@ export class JevController {
         return;
       }
 
+      let jump_profile: JumpProfile = "full";
+      let profile_probabilities: JumpProfileProbabilities = {
+        ...EMPTY_PROFILE_PROBABILITIES,
+      };
+      let profileMs = 0;
+
+      // Second sequential call: jump profile only when the maneuver is jump.
+      if (
+        decision.source !== "none" &&
+        decision.confidence >= CONFIDENCE_THRESHOLD &&
+        decision.action === "jump"
+      ) {
+        // Show maneuver bars while the profile ask is in flight.
+        const partial: DecideResponse & { effectiveJumpProfile: JumpProfile } = {
+          ...decision,
+          jump_profile: "full",
+          profile_probabilities,
+          probabilities: decision.probabilities ?? {
+            ...EMPTY_PROBABILITIES,
+            [decision.action]: decision.confidence,
+          },
+          effectiveJumpProfile: "full",
+          durationMs:
+            decision.durationMs ?? performance.now() - plan.requestedAt,
+        };
+        this.lastAsk = ask;
+        this.lastDecision = partial;
+        this.emitIo("thinking", ask, partial);
+
+        const profileResult = await this.fetchJumpProfile(plan, body);
+        if (!this.running) return;
+        if (
+          this.plans.get(plan.obstacleId) !== plan ||
+          plan.status !== "pending"
+        ) {
+          return;
+        }
+        if (profileResult) {
+          jump_profile = profileResult.jump_profile;
+          profile_probabilities = profileResult.profile_probabilities;
+          profileMs = profileResult.durationMs;
+        }
+      }
+
       const shortOk =
         ask.obstacle.kind === "small_cactus" &&
         ask.obstacle.group === "single";
       const effectiveJumpProfile: JumpProfile =
         decision.action === "jump" &&
-        decision.jump_profile === "short" &&
+        jump_profile === "short" &&
         shortOk
           ? "short"
           : "full";
@@ -424,12 +470,18 @@ export class JevController {
       const enriched: DecideResponse & { effectiveJumpProfile: JumpProfile } = {
         ...decision,
         jump_profile: effectiveJumpProfile,
+        profile_probabilities:
+          decision.action === "jump"
+            ? profile_probabilities
+            : { ...EMPTY_PROFILE_PROBABILITIES },
         probabilities: decision.probabilities ?? {
           ...EMPTY_PROBABILITIES,
           [decision.action]: decision.confidence,
         },
         effectiveJumpProfile,
-        durationMs: decision.durationMs ?? performance.now() - plan.requestedAt,
+        durationMs:
+          (decision.durationMs ?? performance.now() - plan.requestedAt) +
+          profileMs,
       };
       plan.decision = enriched;
       this.lastAsk = ask;
@@ -484,6 +536,68 @@ export class JevController {
         "color:inherit",
         message,
       );
+    }
+  }
+
+  private async fetchJumpProfile(
+    plan: Plan,
+    body: DecideBody,
+    attempt = 0,
+  ): Promise<{
+    jump_profile: JumpProfile;
+    profile_probabilities: JumpProfileProbabilities;
+    durationMs: number;
+  } | null> {
+    try {
+      const response = await fetch("/api/jev-jump-profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.any([
+          plan.abort.signal,
+          AbortSignal.timeout(JEV_CLIENT_TIMEOUT_MS),
+        ]),
+      });
+      if (!response.ok) {
+        throw new Error(`jump profile failed (${response.status})`);
+      }
+      const result = (await response.json()) as {
+        jump_profile?: JumpProfile;
+        profile_probabilities?: JumpProfileProbabilities;
+        durationMs?: number;
+        source?: string;
+      };
+      return {
+        jump_profile: result.jump_profile === "short" ? "short" : "full",
+        profile_probabilities: result.profile_probabilities ?? {
+          short: 0,
+          full: 1,
+        },
+        durationMs: result.durationMs ?? 0,
+      };
+    } catch (error) {
+      if (plan.abort.signal.aborted) return null;
+      if (attempt < 1) {
+        console.log(
+          "%c[Jev]%c retrying jump profile %s (%s)",
+          "color:#c60;font-weight:600",
+          "color:inherit",
+          plan.obstacleId,
+          error instanceof Error ? error.message : "request failed",
+        );
+        return this.fetchJumpProfile(plan, body, attempt + 1);
+      }
+      console.log(
+        "%c[Jev]%c jump profile failed, defaulting to full (%s)",
+        "color:#666;font-weight:600",
+        "color:inherit",
+        error instanceof Error ? error.message : "request failed",
+      );
+      return {
+        jump_profile: "full",
+        profile_probabilities: { short: 0, full: 1 },
+        durationMs: 0,
+      };
     }
   }
 
