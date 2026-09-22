@@ -5,9 +5,9 @@ import {
   GAME_DURATION_MS,
   LANE_GAP,
   LANE_HEIGHT,
-  SPECTATE_ACCEL_MULT,
   SPECTATE_ELAPSED_MULT,
   SPECTATE_MS,
+  spectateAccelMult,
 } from "./constants";
 import { Dino } from "./dino";
 import { CloudField, HorizonLine } from "./horizon";
@@ -283,13 +283,15 @@ export class RaceGame {
     const difficultyDt = spectating
       ? deltaTime * SPECTATE_ELAPSED_MULT
       : deltaTime;
-    const speedDt = spectating ? deltaTime * SPECTATE_ACCEL_MULT : deltaTime;
+    // Ease accel up over a few seconds — faster climb, no sudden spike.
+    const speedDt = spectating
+      ? deltaTime * spectateAccelMult(this.spectateElapsedMs)
+      : deltaTime;
 
     this.elapsedMs += difficultyDt;
     this.clearTimer += deltaTime;
     if (spectating) this.spectateElapsedMs += deltaTime;
     // Chromium-style: nudge speed every frame toward MAX_SPEED.
-    // Spectate only accelerates a bit faster — never snap to a high floor.
     this.speed = stepSpeed(this.speed, speedDt);
 
     if (this.clearTimer > CLEAR_TIME_MS) {
