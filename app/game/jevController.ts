@@ -111,10 +111,12 @@ type DecideBody = {
   speed: number;
   dinosaur_motion: DinosaurMotion;
   obstacle: DescribedObstacle;
-  next_obstacle: (DescribedObstacle & {
-    gap_px: number;
-    seconds_until_next: number;
-  }) | null;
+  next_obstacles: Array<
+    DescribedObstacle & {
+      gap_px: number;
+      seconds_until_next: number;
+    }
+  >;
   /** Maneuver already taken for this obstacle (profile ask). */
   maneuver?: DecideResponse["action"] | null;
 };
@@ -377,8 +379,8 @@ export class JevController {
   }
 
   /**
-   * Fire profile once the maneuver is known and next_obstacle is available
-   * (or the ask deadline hits).
+   * Fire profile once the maneuver is known and at least one follow-up is
+   * available (or the ask deadline hits).
    */
   private flushProfileAsks(snapshot: JevSnapshot) {
     for (const id of [...this.awaitingProfile]) {
@@ -401,7 +403,7 @@ export class JevController {
       if (!plan.decision) continue;
 
       const obstacle = snapshot.obstacles.find((o) => o.id === id) ?? plan.obstacle;
-      const next = this.findNextObstacle(obstacle, snapshot);
+      const nexts = this.findNextObstacles(obstacle, snapshot, 2);
       const threshold = calculateActionProximityThreshold({
         baseSpeed: BASE_SPEED,
         currentSpeed: snapshot.speed,
@@ -412,8 +414,8 @@ export class JevController {
       });
       const pxPerSec = Math.max(snapshot.speed, 0.1) * 60;
       const secondsToAct = Math.max(0, (obstacle.xPos - threshold) / pxPerSec);
-      // Prefer waiting for next; fire anyway near the action deadline.
-      if (!next && secondsToAct > JEV_ASK_DEADLINE_SECONDS) {
+      // Prefer waiting for a follow-up; fire anyway near the action deadline.
+      if (nexts.length === 0 && secondsToAct > JEV_ASK_DEADLINE_SECONDS) {
         continue;
       }
 
@@ -439,42 +441,50 @@ export class JevController {
     };
   }
 
-  private findNextObstacle(
+  private findNextObstacles(
     obstacle: Obstacle,
     snapshot: JevSnapshot,
-  ): {
+    limit = 2,
+  ): Array<{
     obstacle: Obstacle;
     gap_px: number;
     seconds_until_next: number;
-  } | null {
+  }> {
     const ahead = snapshot.obstacles
       .filter((o) => !o.remove && o.xPos > obstacle.xPos)
-      .sort((a, b) => a.xPos - b.xPos);
-    const next = ahead[0];
-    if (!next) return null;
-    const gap_px = Math.max(
-      0,
-      Math.round(next.xPos - (obstacle.xPos + obstacle.width)),
-    );
+      .sort((a, b) => a.xPos - b.xPos)
+      .slice(0, Math.max(0, limit));
     const pxPerSec = Math.max(snapshot.speed, 0.1) * 60;
-    return {
-      obstacle: next,
-      gap_px,
-      seconds_until_next: gap_px / pxPerSec,
-    };
+    const out: Array<{
+      obstacle: Obstacle;
+      gap_px: number;
+      seconds_until_next: number;
+    }> = [];
+    let prev = obstacle;
+    for (const next of ahead) {
+      const gap_px = Math.max(
+        0,
+        Math.round(next.xPos - (prev.xPos + prev.width)),
+      );
+      out.push({
+        obstacle: next,
+        gap_px,
+        seconds_until_next: gap_px / pxPerSec,
+      });
+      prev = next;
+    }
+    return out;
   }
 
   private buildNextDescribed(
     obstacle: Obstacle,
     snapshot: JevSnapshot,
-  ): DecideBody["next_obstacle"] {
-    const next = this.findNextObstacle(obstacle, snapshot);
-    if (!next) return null;
-    return {
+  ): DecideBody["next_obstacles"] {
+    return this.findNextObstacles(obstacle, snapshot, 2).map((next) => ({
       ...this.describeObstacle(next.obstacle),
       gap_px: next.gap_px,
       seconds_until_next: next.seconds_until_next,
-    };
+    }));
   }
 
   private queueDecision(obstacle: Obstacle, snapshot: JevSnapshot) {
@@ -494,25 +504,23 @@ export class JevController {
         flight_path: described.flight_path,
         width_px: described.width_px,
       },
-      next_obstacle: nextDescribed
-        ? {
-            id: nextDescribed.id,
-            type: nextDescribed.type,
-            bird_altitude: nextDescribed.bird_altitude,
-            kind: nextDescribed.kind,
-            group: nextDescribed.group,
-            flight_path: nextDescribed.flight_path,
-            width_px: nextDescribed.width_px,
-            gap_px: nextDescribed.gap_px,
-            seconds_until_next: nextDescribed.seconds_until_next,
-          }
-        : null,
+      next_obstacles: nextDescribed.map((n) => ({
+        id: n.id,
+        type: n.type,
+        bird_altitude: n.bird_altitude,
+        kind: n.kind,
+        group: n.group,
+        flight_path: n.flight_path,
+        width_px: n.width_px,
+        gap_px: n.gap_px,
+        seconds_until_next: n.seconds_until_next,
+      })),
     };
     const body: DecideBody = {
       speed: ask.speed,
       dinosaur_motion: ask.dinosaur_motion,
       obstacle: described,
-      next_obstacle: nextDescribed,
+      next_obstacles: nextDescribed,
     };
     const plan: Plan = {
       obstacleId: obstacle.id,
@@ -717,35 +725,33 @@ export class JevController {
   }
 
   private async fetchJumpProfile(plan: Plan, attempt = 0): Promise<void> {
-    // Refresh next + pass the maneuver just taken for recovery sizing.
+    // Refresh next two + pass the maneuver just taken for recovery sizing.
     const snapshot = this.options.getSnapshot();
     const nextDescribed = snapshot
       ? this.buildNextDescribed(plan.obstacle, snapshot)
-      : plan.body.next_obstacle;
+      : plan.body.next_obstacles;
     const liveSpeed = snapshot?.speed ?? plan.body.speed;
     const body: DecideBody = {
       ...plan.body,
       speed: liveSpeed,
-      next_obstacle: nextDescribed,
+      next_obstacles: nextDescribed,
       maneuver: plan.decision?.action ?? null,
     };
-    if (body.next_obstacle) {
-      const n = body.next_obstacle;
-      plan.ask = {
-        ...plan.ask,
-        next_obstacle: {
-          id: n.id,
-          type: n.type,
-          bird_altitude: n.bird_altitude,
-          kind: n.kind,
-          group: n.group,
-          flight_path: n.flight_path,
-          width_px: n.width_px,
-          gap_px: n.gap_px,
-          seconds_until_next: n.seconds_until_next,
-        },
-      };
-    }
+    plan.ask = {
+      ...plan.ask,
+      speed: liveSpeed,
+      next_obstacles: nextDescribed.map((n) => ({
+        id: n.id,
+        type: n.type,
+        bird_altitude: n.bird_altitude,
+        kind: n.kind,
+        group: n.group,
+        flight_path: n.flight_path,
+        width_px: n.width_px,
+        gap_px: n.gap_px,
+        seconds_until_next: n.seconds_until_next,
+      })),
+    };
 
     try {
       const response = await fetch("/api/jev-jump-profile", {

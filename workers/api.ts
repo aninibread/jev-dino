@@ -122,13 +122,13 @@ function parseObstacle(
 function parseNextObstacle(
   raw: unknown,
   speed: number,
-): NextObstacleContext | null {
-  if (raw == null) return null;
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    throw new ApiError(400, "Invalid next_obstacle.");
+  label = "next_obstacle",
+): NextObstacleContext {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ApiError(400, `Invalid ${label}.`);
   }
   const value = raw as Record<string, unknown>;
-  const parsed = parseObstacle(value, "next_obstacle");
+  const parsed = parseObstacle(value, label);
   const gap_px =
     typeof value.gap_px === "number" && Number.isFinite(value.gap_px)
       ? Math.max(0, Math.round(value.gap_px))
@@ -148,6 +148,25 @@ function parseNextObstacle(
     gap_px,
     seconds_until_next,
   };
+}
+
+function parseNextObstacles(
+  raw: unknown,
+  speed: number,
+): NextObstacleContext[] {
+  if (raw == null) return [];
+  // Accept legacy single next_obstacle for older clients.
+  if (!Array.isArray(raw)) {
+    if (typeof raw === "object") {
+      return [parseNextObstacle(raw, speed)];
+    }
+    throw new ApiError(400, "Invalid next_obstacles.");
+  }
+  return raw
+    .slice(0, 2)
+    .map((item, index) =>
+      parseNextObstacle(item, speed, `next_obstacles[${index}]`),
+    );
 }
 
 function parseState(raw: Record<string, unknown>): DecideState {
@@ -176,6 +195,9 @@ function parseState(raw: Record<string, unknown>): DecideState {
       ? (raw.maneuver as Maneuver)
       : null;
 
+  const nextRaw =
+    raw.next_obstacles !== undefined ? raw.next_obstacles : raw.next_obstacle;
+
   return {
     speed: raw.speed,
     dinosaur_motion: motion,
@@ -186,7 +208,7 @@ function parseState(raw: Record<string, unknown>): DecideState {
       flight_path: parsed.flight_path,
       width_px: parsed.width_px,
     },
-    next_obstacle: parseNextObstacle(raw.next_obstacle, raw.speed),
+    next_obstacles: parseNextObstacles(nextRaw, raw.speed),
     maneuver,
   };
 }

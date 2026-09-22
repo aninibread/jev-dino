@@ -222,13 +222,22 @@ export function JevIoPanel({
   const chosen = stickyChosen.current;
   const profileProbs = stickyProfileProbs.current;
   const chosenProfile = stickyChosenProfile.current;
-  const next = ask?.next_obstacle ?? null;
-  const nextLabel = next
-    ? `${labelKind(next.kind)} ${labelGroup(next.group)}`
-    : "–";
-  const gapLabel = next
-    ? `${next.gap_px}px / ${next.seconds_until_next.toFixed(2)}s`
-    : "–";
+  const nexts = ask?.next_obstacles ?? [];
+  const nextLabel =
+    nexts.length > 0
+      ? nexts
+          .map(
+            (n) =>
+              `${labelKind(n.kind)} ${labelGroup(n.group)} (${n.width_px}px)`,
+          )
+          .join(" → ")
+      : "–";
+  const gapLabel =
+    nexts.length > 0
+      ? nexts
+          .map((n) => `${n.gap_px}px / ${n.seconds_until_next.toFixed(2)}s`)
+          .join(" → ")
+      : "–";
 
   return (
     <section
@@ -269,7 +278,7 @@ export function JevIoPanel({
               <dd>{nextLabel}</dd>
             </div>
             <div>
-              <dt>Gap to next</dt>
+              <dt>Gaps</dt>
               <dd>{gapLabel}</dd>
             </div>
           </dl>
