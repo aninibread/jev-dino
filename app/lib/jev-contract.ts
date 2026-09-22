@@ -280,8 +280,7 @@ export function buildManeuverQuestions() {
 
 /**
  * Recovery profile after a maneuver is chosen.
- * Short = next is close enough to need early recovery;
- * full = next is far, or the next two are a tight wide stack.
+ * Soft guidance: short for a close next; full when far or a tight wide stack.
  */
 export function buildJumpProfileQuestions() {
   return {
@@ -289,25 +288,18 @@ export function buildJumpProfileQuestions() {
       type: "choice",
       instructions: [
         "Choose short or full recovery for the maneuver just taken.",
-        "Use current_speed and next_obstacles (up to two: kind, path, width, gap).",
-        "Choose short when the first next obstacle is close and you need to",
-        "recover for a second jump or duck soon.",
-        "Choose full when there is no next obstacle, the next gap is not close,",
-        "or the next two obstacles are super close to each other and wide",
-        "(a short recovery would land in that stack).",
+        "Use current_speed and next_obstacles (kind, path, width, gap).",
+        "Lean short when the next obstacle is fairly close and earlier recovery",
+        "helps a second move. Lean full when the next gap is comfortable, or",
+        "when the next two look packed and wide so landing between them is risky.",
+        "Prefer full when unsure.",
       ].join(" "),
       criteria: {
         short: {
-          what: [
-            "Next obstacle is close enough that earlier recovery is needed",
-            "for a second move — and it is not the start of a tight wide stack.",
-          ].join(" "),
+          what: "Earlier recovery when the next obstacle is close enough to matter.",
         },
         full: {
-          what: [
-            "Next is far or missing, or the next two are packed tight and wide",
-            "so a short recovery would fail between them.",
-          ].join(" "),
+          what: "Safer hold when the next gap is fine, or a tight wide follow-up stack.",
         },
       },
     },
