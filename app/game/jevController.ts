@@ -66,10 +66,22 @@ type Plan = {
   decision?: DecideResponse & { effectiveJumpProfile: JumpProfile };
 };
 
-function isAbortLike(error: unknown): boolean {
-  const name = (error as Error)?.name;
-  return name === "AbortError" || name === "TimeoutError";
-}
+type DecideBody = {
+  speed: number;
+  dinosaur_motion: DinosaurMotion;
+  obstacle: {
+    id: string;
+    type: string;
+    size: number;
+    width: number;
+    y: number;
+    bird_altitude?: string;
+    kind: string;
+    group: string;
+    flight_path: string;
+    width_px: number;
+  };
+};
 
 /**
  * Per-obstacle planner (joshlarsen/jev-t-rex-runner style):
