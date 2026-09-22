@@ -10,7 +10,7 @@
 /** Per-frame acceleration at 60fps (Chromium uses 0.001; a bit higher for a 60s race). */
 export const ACCELERATION = 0.002;
 /** Soft cap — Chrome uses 13; we allow a touch more late-race pressure. */
-export const MAX_SPEED = 14;
+export const MAX_SPEED = 15;
 /** Chromium Obstacle.MAX_GAP_COEFFICIENT */
 export const MAX_GAP_COEFFICIENT = 1.5;
 
