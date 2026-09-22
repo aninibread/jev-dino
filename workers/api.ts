@@ -6,6 +6,8 @@ import {
   type DecideResponse,
   type DecideState,
   type DinosaurMotion,
+  type NextObstacleContext,
+  type ObstacleDecisionState,
   type ObstacleKind,
 } from "../app/lib/jev-contract";
 import { ApiError, decideWithJev, publicError } from "./ai";
@@ -53,6 +55,94 @@ async function limitedBody(request: Request, limit: number): Promise<Uint8Array>
   return bytes;
 }
 
+function parseObstacle(
+  raw: Record<string, unknown>,
+  label: string,
+): ObstacleDecisionState & {
+  type: ObstacleKind;
+  size: number;
+  y: number;
+  bird_altitude?: "high" | "mid" | "low";
+} {
+  const type =
+    raw.type === "cactus-small" ||
+    raw.type === "cactus-large" ||
+    raw.type === "bird"
+      ? (raw.type as ObstacleKind)
+      : raw.kind === "small_cactus"
+        ? "cactus-small"
+        : raw.kind === "large_cactus"
+          ? "cactus-large"
+          : raw.kind === "pterodactyl"
+            ? "bird"
+            : null;
+  if (!type || !kinds.includes(type)) {
+    throw new ApiError(400, `Invalid ${label} type.`);
+  }
+  if (typeof raw.id !== "string" || !raw.id) {
+    throw new ApiError(400, `${label} needs an id.`);
+  }
+  const size = typeof raw.size === "number" ? raw.size : 1;
+  const width =
+    typeof raw.width_px === "number"
+      ? raw.width_px
+      : typeof raw.width === "number"
+        ? raw.width
+        : 17;
+  const y = typeof raw.y === "number" ? raw.y : 100;
+  const alt =
+    type === "bird"
+      ? raw.bird_altitude === "high" ||
+        raw.bird_altitude === "mid" ||
+        raw.bird_altitude === "low"
+        ? raw.bird_altitude
+        : birdAltitude(y)
+      : undefined;
+
+  return {
+    id: raw.id,
+    type,
+    size,
+    y,
+    bird_altitude: alt,
+    kind: toSemanticKind(type),
+    group: toGroup(size),
+    flight_path: flightPathFor(type, alt),
+    width_px: Math.round(width),
+  };
+}
+
+function parseNextObstacle(
+  raw: unknown,
+  speed: number,
+): NextObstacleContext | null {
+  if (raw == null) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ApiError(400, "Invalid next_obstacle.");
+  }
+  const value = raw as Record<string, unknown>;
+  const parsed = parseObstacle(value, "next_obstacle");
+  const gap_px =
+    typeof value.gap_px === "number" && Number.isFinite(value.gap_px)
+      ? Math.max(0, Math.round(value.gap_px))
+      : 0;
+  const seconds_until_next =
+    typeof value.seconds_until_next === "number" &&
+    Number.isFinite(value.seconds_until_next)
+      ? Math.max(0, value.seconds_until_next)
+      : gap_px / Math.max(speed * 60, 0.1);
+
+  return {
+    id: parsed.id,
+    kind: parsed.kind,
+    group: parsed.group,
+    flight_path: parsed.flight_path,
+    width_px: parsed.width_px,
+    gap_px,
+    seconds_until_next,
+  };
+}
+
 function parseState(raw: Record<string, unknown>): DecideState {
   const obstacle = raw.obstacle;
   if (
@@ -63,41 +153,6 @@ function parseState(raw: Record<string, unknown>): DecideState {
   ) {
     throw new ApiError(400, "Invalid game state.");
   }
-  const o = obstacle as Record<string, unknown>;
-  const type =
-    o.type === "cactus-small" ||
-    o.type === "cactus-large" ||
-    o.type === "bird"
-      ? (o.type as ObstacleKind)
-      : o.kind === "small_cactus"
-        ? "cactus-small"
-        : o.kind === "large_cactus"
-          ? "cactus-large"
-          : o.kind === "pterodactyl"
-            ? "bird"
-            : null;
-  if (!type || !kinds.includes(type)) {
-    throw new ApiError(400, "Invalid obstacle type.");
-  }
-  if (typeof o.id !== "string" || !o.id) {
-    throw new ApiError(400, "Obstacle needs an id.");
-  }
-  const size = typeof o.size === "number" ? o.size : 1;
-  const width =
-    typeof o.width_px === "number"
-      ? o.width_px
-      : typeof o.width === "number"
-        ? o.width
-        : 17;
-  const y = typeof o.y === "number" ? o.y : 100;
-  const alt =
-    type === "bird"
-      ? o.bird_altitude === "high" ||
-        o.bird_altitude === "mid" ||
-        o.bird_altitude === "low"
-        ? o.bird_altitude
-        : birdAltitude(y)
-      : undefined;
 
   const motion =
     typeof raw.dinosaur_motion === "string" &&
@@ -105,16 +160,19 @@ function parseState(raw: Record<string, unknown>): DecideState {
       ? (raw.dinosaur_motion as DinosaurMotion)
       : "running";
 
+  const parsed = parseObstacle(obstacle as Record<string, unknown>, "obstacle");
+
   return {
     speed: raw.speed,
     dinosaur_motion: motion,
     obstacle: {
-      id: o.id,
-      kind: toSemanticKind(type),
-      group: toGroup(size),
-      flight_path: flightPathFor(type, alt),
-      width_px: Math.round(width),
+      id: parsed.id,
+      kind: parsed.kind,
+      group: parsed.group,
+      flight_path: parsed.flight_path,
+      width_px: parsed.width_px,
     },
+    next_obstacle: parseNextObstacle(raw.next_obstacle, raw.speed),
   };
 }
 

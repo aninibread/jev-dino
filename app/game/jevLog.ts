@@ -16,10 +16,21 @@ export function logJevAsk(body: {
     width_px?: number;
     width?: number;
   };
+  next_obstacle?: {
+    id: string;
+    kind?: string;
+    type?: string;
+    gap_px?: number;
+    seconds_until_next?: number;
+  } | null;
 }): void {
   const o = body.obstacle;
+  const next = body.next_obstacle;
+  const nextBit = next
+    ? ` next=${next.kind ?? next.type} gap=${next.gap_px}px/${Number(next.seconds_until_next ?? 0).toFixed(2)}s`
+    : " next=none";
   console.log(
-    `%c[Jev ask]%c ${o.id} ${o.kind ?? o.type} ${o.group ?? ""} ${o.flight_path ?? ""} w=${o.width_px ?? o.width} spd=${body.speed.toFixed(1)} motion=${body.dinosaur_motion}`,
+    `%c[Jev ask]%c ${o.id} ${o.kind ?? o.type} ${o.group ?? ""} ${o.flight_path ?? ""} w=${o.width_px ?? o.width} spd=${body.speed.toFixed(1)} motion=${body.dinosaur_motion}${nextBit}`,
     "color:#0a7;font-weight:600",
     "color:inherit",
   );

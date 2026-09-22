@@ -1,5 +1,6 @@
 import {
   EMPTY_PROBABILITIES,
+  TIGHT_NEXT_SECONDS,
   labelFlightPath,
   labelGroup,
   labelKind,
@@ -131,6 +132,17 @@ export function JevIoPanel({
   // while the next ask is in flight.
   const probs = decision?.probabilities ?? EMPTY_PROBABILITIES;
   const chosen = decision?.action;
+  const next = ask?.next_obstacle ?? null;
+  const nextLabel = next
+    ? `${labelKind(next.kind)} ${labelGroup(next.group)}`
+    : "–";
+  const gapLabel = next
+    ? `${next.gap_px}px / ${next.seconds_until_next.toFixed(2)}s${
+        next.seconds_until_next <= TIGHT_NEXT_SECONDS ? " tight" : ""
+      }`
+    : "–";
+  const profileLabel =
+    decision?.action === "jump" ? decision.jump_profile : "–";
 
   return (
     <section
@@ -171,6 +183,14 @@ export function JevIoPanel({
               <dt>Motion at ask</dt>
               <dd>{ask ? labelMotion(ask.dinosaur_motion) : "–"}</dd>
             </div>
+            <div>
+              <dt>Next</dt>
+              <dd>{nextLabel}</dd>
+            </div>
+            <div>
+              <dt>Gap to next</dt>
+              <dd>{gapLabel}</dd>
+            </div>
           </dl>
         </div>
 
@@ -202,6 +222,12 @@ export function JevIoPanel({
               );
             })}
           </ul>
+          <dl className="jev-io-facts">
+            <div>
+              <dt>Jump profile</dt>
+              <dd>{profileLabel}</dd>
+            </div>
+          </dl>
         </div>
       </div>
     </section>

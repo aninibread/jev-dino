@@ -81,6 +81,20 @@ type DecideBody = {
     flight_path: string;
     width_px: number;
   };
+  next_obstacle: {
+    id: string;
+    type: string;
+    size: number;
+    width: number;
+    y: number;
+    bird_altitude?: string;
+    kind: string;
+    group: string;
+    flight_path: string;
+    width_px: number;
+    gap_px: number;
+    seconds_until_next: number;
+  } | null;
 };
 
 /**
@@ -230,22 +244,85 @@ export class JevController {
     }
   }
 
-  private queueDecision(obstacle: Obstacle, snapshot: JevSnapshot) {
-    const abort = new AbortController();
+  private describeObstacle(obstacle: Obstacle) {
     const type = obstacle.typeConfig.kind;
     const alt = type === "bird" ? birdAltitude(obstacle.yPos) : undefined;
+    return {
+      id: obstacle.id,
+      type,
+      size: obstacle.size,
+      width: obstacle.width,
+      y: obstacle.yPos,
+      bird_altitude: alt,
+      kind: toSemanticKind(type),
+      group: toGroup(obstacle.size),
+      flight_path: flightPathFor(type, alt),
+      width_px: Math.round(obstacle.width),
+    };
+  }
+
+  private findNextObstacle(
+    obstacle: Obstacle,
+    snapshot: JevSnapshot,
+  ): {
+    obstacle: Obstacle;
+    gap_px: number;
+    seconds_until_next: number;
+  } | null {
+    const ahead = snapshot.obstacles
+      .filter((o) => !o.remove && o.xPos > obstacle.xPos)
+      .sort((a, b) => a.xPos - b.xPos);
+    const next = ahead[0];
+    if (!next) return null;
+    const gap_px = Math.max(
+      0,
+      Math.round(next.xPos - (obstacle.xPos + obstacle.width)),
+    );
+    const pxPerSec = Math.max(snapshot.speed, 0.1) * 60;
+    return {
+      obstacle: next,
+      gap_px,
+      seconds_until_next: gap_px / pxPerSec,
+    };
+  }
+
+  private queueDecision(obstacle: Obstacle, snapshot: JevSnapshot) {
+    const abort = new AbortController();
+    const described = this.describeObstacle(obstacle);
+    const next = this.findNextObstacle(obstacle, snapshot);
+    const nextDescribed = next
+      ? {
+          ...this.describeObstacle(next.obstacle),
+          gap_px: next.gap_px,
+          seconds_until_next: next.seconds_until_next,
+        }
+      : null;
+
     const ask: JevAskView = {
       speed: snapshot.speed,
       dinosaur_motion: snapshot.dinosaurMotion,
       obstacle: {
-        id: obstacle.id,
-        type,
-        bird_altitude: alt,
-        kind: toSemanticKind(type),
-        group: toGroup(obstacle.size),
-        flight_path: flightPathFor(type, alt),
-        width_px: Math.round(obstacle.width),
+        id: described.id,
+        type: described.type,
+        bird_altitude: described.bird_altitude,
+        kind: described.kind,
+        group: described.group,
+        flight_path: described.flight_path,
+        width_px: described.width_px,
       },
+      next_obstacle: nextDescribed
+        ? {
+            id: nextDescribed.id,
+            type: nextDescribed.type,
+            bird_altitude: nextDescribed.bird_altitude,
+            kind: nextDescribed.kind,
+            group: nextDescribed.group,
+            flight_path: nextDescribed.flight_path,
+            width_px: nextDescribed.width_px,
+            gap_px: nextDescribed.gap_px,
+            seconds_until_next: nextDescribed.seconds_until_next,
+          }
+        : null,
     };
     const plan: Plan = {
       obstacleId: obstacle.id,
@@ -259,21 +336,11 @@ export class JevController {
     this.lastAsk = ask;
     this.emitIo("thinking", ask, null);
 
-    const body = {
+    const body: DecideBody = {
       speed: ask.speed,
       dinosaur_motion: ask.dinosaur_motion,
-      obstacle: {
-        id: ask.obstacle.id,
-        type,
-        size: obstacle.size,
-        width: obstacle.width,
-        y: obstacle.yPos,
-        bird_altitude: alt,
-        kind: ask.obstacle.kind,
-        group: ask.obstacle.group,
-        flight_path: ask.obstacle.flight_path,
-        width_px: ask.obstacle.width_px,
-      },
+      obstacle: described,
+      next_obstacle: nextDescribed,
     };
 
     this.enqueueDecide(async () => {
