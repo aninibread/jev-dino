@@ -234,6 +234,25 @@ function parseState(raw: Record<string, unknown>): DecideState {
           : null,
     },
     recent_actions,
+    last_decisions: (() => {
+      const rawList = Array.isArray(raw.last_decisions)
+        ? raw.last_decisions
+        : [];
+      return rawList
+        .filter((e) => e && typeof e === "object" && !Array.isArray(e))
+        .slice(-4)
+        .map((e) => {
+          const d = e as Record<string, unknown>;
+          return {
+            action: asAction(d.action, "run"),
+            press_jump:
+              typeof d.press_jump === "number" ? d.press_jump : 0,
+            press_duck:
+              typeof d.press_duck === "number" ? d.press_duck : 0,
+            at_t: typeof d.at_t === "number" ? d.at_t : 0,
+          };
+        });
+    })(),
     visible: parsed,
     constraints: {
       can_jump_this_frame: Boolean(constraintsRaw.can_jump_this_frame),

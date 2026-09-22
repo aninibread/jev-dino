@@ -1,4 +1,5 @@
 import {
+  composeKeyHolds,
   emptyAtomic,
   pickAction,
   type DecideResponse,
@@ -96,6 +97,16 @@ export class JevController {
       this.pressDuck = 0;
       this.emitAction("run", 0, 0, "jev", state);
       return;
+    }
+
+    // Recompose every frame from the last atomic answers + current state.
+    // Stops jump-spam: once already_jumped_for flips true, press_jump drops
+    // without waiting for another (slow) Jev round-trip.
+    const atomic = this.lastDecision?.atomic;
+    if (atomic) {
+      const composed = composeKeyHolds(atomic, state);
+      this.pressJump = composed.press_jump;
+      this.pressDuck = composed.press_duck;
     }
 
     const action = pickAction(

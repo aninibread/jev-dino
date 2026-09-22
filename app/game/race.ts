@@ -17,6 +17,7 @@ import type {
   ActionEvent,
   DecideResponse,
   JevAction,
+  PastDecision,
 } from "../lib/jev-contract";
 import {
   birdAltitude,
@@ -79,6 +80,7 @@ export class RaceGame {
   private prevAction: JevAction = "run";
   private currentAction: JevAction = "run";
   private recentActions: ActionEvent[] = [];
+  private lastDecisions: PastDecision[] = [];
   private actionStartedAtMs = 0;
   private prevActionHeldForS = 0;
   private jumpedForIds = new Set<string>();
@@ -105,6 +107,7 @@ export class RaceGame {
       getState: () => this.buildJevState(),
       onDecision: (decision) => {
         this.lastJev = decision;
+        this.recordDecision(decision);
         this.noteAction(decision.action);
         this.applyJevAction(decision.action);
         this.emit();
@@ -253,7 +256,18 @@ export class RaceGame {
     this.cloudsJev.reset();
     this.prevAction = "run";
     this.currentAction = "run";
-    this.recentActions = [];
+    this.recentActions = [
+      {
+        action: "run",
+        at_t: 0,
+        held_for_s: 0,
+        nearest_obstacle_id: null,
+        nearest_obstacle_type: null,
+        nearest_width_px: null,
+        nearest_height_px: null,
+      },
+    ];
+    this.lastDecisions = [];
     this.actionStartedAtMs = 0;
     this.prevActionHeldForS = 0;
     this.jumpedForIds.clear();
@@ -262,6 +276,16 @@ export class RaceGame {
     this.landedAtMs = -1e9;
     this.wasJevAirborne = false;
     this.justLanded = false;
+  }
+
+  private recordDecision(decision: DecideResponse) {
+    this.lastDecisions.push({
+      action: decision.action,
+      press_jump: decision.press_jump,
+      press_duck: decision.press_duck,
+      at_t: Number((this.elapsedMs / 1000).toFixed(3)),
+    });
+    if (this.lastDecisions.length > 4) this.lastDecisions.shift();
   }
 
   private noteAction(action: JevAction) {
@@ -311,6 +335,13 @@ export class RaceGame {
     if (!airborne && this.wasJevAirborne) {
       this.landedAtMs = this.elapsedMs;
       this.justLanded = true;
+    }
+
+    // Drop memory for obstacles that have fully scrolled past.
+    for (const o of this.obstacles.obstacles) {
+      if (o.xPos + o.width < TREX.START_X - 10) {
+        this.jumpedForIds.delete(o.id);
+      }
     }
 
     this.wasJevAirborne = airborne;
@@ -405,6 +436,7 @@ export class RaceGame {
               )
             : ev.held_for_s,
       })),
+      last_decisions: this.lastDecisions.slice(-3),
       visible,
       constraints: {
         can_jump_this_frame: this.jev.grounded && !this.jev.jumping,

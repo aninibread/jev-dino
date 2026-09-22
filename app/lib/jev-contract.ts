@@ -38,6 +38,14 @@ export type ActionEvent = {
   nearest_height_px: number | null;
 };
 
+/** Snapshot of a prior decide / key-hold application. */
+export type PastDecision = {
+  action: JevAction;
+  press_jump: number;
+  press_duck: number;
+  at_t: number;
+};
+
 /** Deterministic physics the player also knows — not tactical advice. */
 export type PhysicsConstraints = {
   can_jump_this_frame: boolean;
@@ -73,6 +81,8 @@ export type DecideState = {
     nearest_id_when_jump_started: string | null;
   };
   recent_actions: ActionEvent[];
+  /** Last 2–3 applied decisions (newest last) — continuity for Jev. */
+  last_decisions: PastDecision[];
   visible: UpcomingObstacle[];
   constraints: PhysicsConstraints;
   /** Pixel gap between 1st and 2nd visible obstacle (null if <2). */
@@ -131,7 +141,10 @@ export function pickAction(
   airborne: boolean,
 ): JevAction {
   if (airborne) {
+    // Keep "jump" visible while the jump key is held mid-air so memory
+    // doesn't flip jump→run every takeoff (that wiped action context).
     if (press_duck >= 0.45) return "duck";
+    if (press_jump >= 0.45) return "jump";
     return "run";
   }
   if (press_duck >= 0.5 && press_duck >= press_jump) return "duck";
@@ -159,6 +172,15 @@ export function composeKeyHolds(
     if (constraints.mid_air_duck_means_speed_drop) {
       press_duck = Math.max(atomic.speed_drop_now, atomic.nearest_needs_duck);
     }
+  } else if (nearest?.already_jumped_for) {
+    // Already committed a jump to the nearest hazard — do not re-jump it.
+    // Only press jump again for a tight second obstacle.
+    const chain =
+      atomic.second_needs_jump >= 0.55 && atomic.gap_is_tight >= 0.55;
+    press_jump = chain
+      ? Math.max(atomic.second_needs_jump, atomic.hold_jump_until_land)
+      : 0;
+    press_duck = atomic.nearest_needs_duck;
   } else {
     press_jump = atomic.nearest_needs_jump;
     if (atomic.second_needs_jump >= 0.55 && atomic.gap_is_tight >= 0.55) {
@@ -172,18 +194,8 @@ export function composeKeyHolds(
     press_jump = Math.min(press_jump, 0.12);
   }
 
-  // Already jumped for this one while still clearing it — look at second.
-  if (nearest?.already_jumped_for && dino.airborne) {
-    press_jump = Math.max(
-      atomic.hold_jump_until_land,
-      atomic.second_needs_jump,
-    );
-  }
-
   if (!constraints.can_jump_this_frame) {
-    press_jump = dino.airborne
-      ? Math.max(atomic.hold_jump_until_land, atomic.second_needs_jump)
-      : 0;
+    press_jump = dino.airborne ? atomic.hold_jump_until_land : 0;
   }
 
   return {
@@ -282,6 +294,37 @@ export function buildSystemOneState(state: DecideState) {
       : null,
   }));
 
+  // Explicit last-couple view so Jev always sees continuity (even if list is short).
+  const chron = recent;
+  const last_couple_of_actions = {
+    most_recent: chron.length
+      ? chron[chron.length - 1]
+      : {
+          action: state.controls.current_action,
+          held_for_seconds: state.controls.current_action_held_for_s,
+          seconds_ago: 0,
+          nearest_obstacle_then: null,
+        },
+    before_that:
+      chron.length >= 2
+        ? chron[chron.length - 2]
+        : {
+            action: state.controls.previous_action,
+            held_for_seconds: state.controls.previous_action_held_for_s,
+            seconds_ago: state.controls.current_action_held_for_s,
+            nearest_obstacle_then: null,
+          },
+    before_that_2: chron.length >= 3 ? chron[chron.length - 3] : null,
+  };
+
+  const last_couple_of_decisions = state.last_decisions.slice(-3).map((d) => ({
+    action: d.action,
+    press_jump: d.press_jump,
+    press_duck: d.press_duck,
+    at_race_t: d.at_t,
+    seconds_ago: Number(Math.max(0, state.t - d.at_t).toFixed(3)),
+  }));
+
   const sequence = [
     ...state.recent_actions.map((e) => e.action),
     state.controls.current_action,
@@ -315,6 +358,10 @@ export function buildSystemOneState(state: DecideState) {
       previous_action_held_for_seconds: Number(
         state.controls.previous_action_held_for_s.toFixed(3),
       ),
+      /** Always present — the last 2–3 key-hold episodes. */
+      last_couple_of_actions,
+      /** Last decide outputs (what keys we pressed after each reply). */
+      last_couple_of_decisions,
       action_sequence,
       jump_key_held: state.controls.jump_key_held,
       duck_key_held: state.controls.duck_key_held,
@@ -322,7 +369,6 @@ export function buildSystemOneState(state: DecideState) {
       last_press_duck: state.controls.last_press_duck,
       nearest_obstacle_id_when_jump_started:
         state.controls.nearest_id_when_jump_started,
-      /** Chronological list of recent key-hold changes (oldest → newest). */
       recent_actions: recent,
     },
     visible_obstacles: obstacles,
@@ -363,20 +409,27 @@ export function buildSystemOneQuestions(hasSecond: boolean) {
           "`visible_obstacles[0].size.how_big`",
           "`dino.on_ground`",
           "`visible_obstacles[0].already_jumped_for`",
+          "`memory.last_couple_of_actions`",
+          "`memory.last_couple_of_decisions`",
           "`memory.action_sequence`",
           "`memory.recent_actions`",
         ],
         focus:
-          "Use size (wide/tall cactus needs an earlier jump). Cactus or low bird, close enough to act. False if already_jumped_for and you are still clearing it, or high bird you run under. Use memory.recent_actions to see what you already did for this obstacle.",
+          "Close enough to need a jump NOW. False if already_jumped_for, if last_couple_of_actions.most_recent was jump for this obstacle, if still airborne over it, if high bird, or if still far away. Do not answer true just because a cactus exists somewhere ahead.",
       },
       criteria: noulCriteria(
         "Must jump this obstacle (cactus or low bird) now or on landing.",
-        "No jump needed for nearest (high bird, too far, or already clearing).",
+        "No jump needed for nearest (already jumped, too far, high bird, or still clearing).",
         [
-          "Large cactus taller_than_dino, 0.25s away",
-          "Low bird at feet height",
+          "Large cactus taller_than_dino, ~0.2–0.3s away, not already jumped",
+          "Low bird at feet height approaching",
         ],
-        ["High bird overhead", "Already jumped, still in air over it"],
+        [
+          "already_jumped_for true",
+          "most_recent action was jump for this id",
+          "High bird overhead",
+          "Obstacle >0.6s away",
+        ],
       ),
     },
     nearest_needs_duck: {
@@ -431,13 +484,15 @@ export function buildSystemOneQuestions(hasSecond: boolean) {
           "`dino.in_the_air`",
           "`memory.previous_action`",
           "`memory.previous_action_held_for_seconds`",
+          "`memory.last_couple_of_actions`",
+          "`memory.last_couple_of_decisions`",
           "`memory.action_sequence`",
           "`memory.recent_actions`",
           "`visible_obstacles[1]`",
           "`visible_obstacles[1].size`",
         ],
         focus:
-          "True when a second cactus/bird still needs a jump soon after this arc. Check recent_actions for a jump you already started and the size of the next obstacle.",
+          "True ONLY when a second cactus/bird still needs a jump soon after this arc. If last_couple_of_actions shows a single jump with a comfortable gap ahead, answer false — do not keep the jump key stuck on.",
       },
       criteria: noulCriteria(
         "Keep jump held through landing for a follow-up jump.",

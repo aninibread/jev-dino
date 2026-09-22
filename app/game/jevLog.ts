@@ -33,13 +33,13 @@ function fmtDino(state: DecideState): string {
 
 function fmtMemory(state: DecideState): string {
   const c = state.controls;
-  const seq = [
-    ...state.recent_actions.map((e) => e.action),
-    c.current_action,
-  ]
-    .filter((a, i, arr) => i === 0 || a !== arr[i - 1])
-    .join("→");
-  return `act=${c.previous_action}(${c.previous_action_held_for_s.toFixed(2)}s)→${c.current_action}(${c.current_action_held_for_s.toFixed(2)}s) seq=${seq} keys:j=${c.jump_key_held ? "1" : "0"}/d=${c.duck_key_held ? "1" : "0"}`;
+  const couple = state.recent_actions.slice(-3);
+  const seq = couple.map((e) => e.action).join("→") || c.current_action;
+  const decisions = state.last_decisions
+    .slice(-2)
+    .map((d) => `${d.action}(j=${pct(d.press_jump)})`)
+    .join(",");
+  return `act=${c.previous_action}(${c.previous_action_held_for_s.toFixed(2)}s)→${c.current_action}(${c.current_action_held_for_s.toFixed(2)}s) seq=${seq}${decisions ? ` decided=[${decisions}]` : ""} keys:j=${c.jump_key_held ? "1" : "0"}/d=${c.duck_key_held ? "1" : "0"}`;
 }
 
 function fmtAtomic(atomic: AtomicAnswers): string {
