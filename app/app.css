@@ -168,7 +168,7 @@ a:focus-visible {
 
 .jev-io-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
@@ -182,9 +182,18 @@ a:focus-visible {
 }
 
 .jev-io-status {
-  font-size: 12px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
   color: var(--muted);
-  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
+.jev-io-status svg {
+  width: 16px;
+  height: 16px;
+  display: block;
 }
 
 .jev-io-status.status-thinking {
@@ -192,13 +201,24 @@ a:focus-visible {
 }
 
 .jev-io-status.status-ready {
-  color: var(--ink);
+  color: #0a7;
 }
 
 .jev-io-status.status-skipped,
 .jev-io-status.status-late,
 .jev-io-status.status-error {
   color: #a35;
+}
+
+@keyframes jev-io-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.jev-io-spin {
+  transform-origin: 8px 8px;
+  animation: jev-io-spin 0.85s linear infinite;
 }
 
 .jev-io-grid {

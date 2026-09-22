@@ -18,12 +18,91 @@ function pct(n: number): string {
 }
 
 function statusLabel(status: JevIoStatus): string {
-  if (status === "thinking") return "Asking Jev...";
+  if (status === "thinking") return "Asking Jev";
   if (status === "ready") return "Plan ready";
-  if (status === "skipped") return "Skipped (low confidence)";
-  if (status === "late") return "Too late, skipped";
+  if (status === "skipped") return "Skipped";
+  if (status === "late") return "Too late";
   if (status === "error") return "Request failed";
-  return "Waiting for obstacles";
+  return "Waiting";
+}
+
+function StatusIcon({ status }: { status: JevIoStatus }) {
+  const label = statusLabel(status);
+  return (
+    <span
+      className={`jev-io-status status-${status}`}
+      title={label}
+      aria-label={label}
+      role="img"
+    >
+      {status === "thinking" ? (
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <circle
+            className="jev-io-spin"
+            cx="8"
+            cy="8"
+            r="5.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeDasharray="18 12"
+          />
+        </svg>
+      ) : status === "ready" ? (
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path
+            d="M3.5 8.2 6.6 11.2 12.5 4.8"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ) : status === "skipped" || status === "late" ? (
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <circle
+            cx="8"
+            cy="8"
+            r="5.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+          />
+          <path
+            d="M5 8h6"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+          />
+        </svg>
+      ) : status === "error" ? (
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path
+            d="M4.5 4.5 11.5 11.5M11.5 4.5 4.5 11.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+          />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <circle
+            cx="8"
+            cy="8"
+            r="5.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeDasharray="2.5 2"
+          />
+        </svg>
+      )}
+    </span>
+  );
 }
 
 export function JevIoPanel({
