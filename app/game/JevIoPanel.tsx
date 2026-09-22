@@ -129,9 +129,7 @@ export function JevIoPanel({
     >
       <header className="jev-io-head">
         <h2>Jev</h2>
-        <span className={`jev-io-status status-${status}`}>
-          {statusLabel(status)}
-        </span>
+        <StatusIcon status={status} />
       </header>
 
       <div className="jev-io-grid">
@@ -160,10 +158,6 @@ export function JevIoPanel({
               <div>
                 <dt>Motion at ask</dt>
                 <dd>{labelMotion(ask.dinosaur_motion)}</dd>
-              </div>
-              <div>
-                <dt>Id</dt>
-                <dd className="mono">{ask.obstacle.id}</dd>
               </div>
             </dl>
           ) : (
