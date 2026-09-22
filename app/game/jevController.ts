@@ -16,8 +16,8 @@ export type JevControllerOptions = {
 
 /**
  * Fair control loop: poll Jev with the visible lane; apply key-hold beliefs.
- * Re-asks as soon as a reply lands (and on landing) so consecutive obstacles
- * get a fresh look — still no local planner inventing moves.
+ * Re-asks as soon as a reply lands (and on landing / nearest change) so
+ * consecutive obstacles get a fresh look — still no local planner inventing moves.
  */
 export class JevController {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -28,6 +28,7 @@ export class JevController {
   private pressJump = 0;
   private pressDuck = 0;
   private wasAirborne = false;
+  private lastNearestId: string | null = null;
   private options: Required<Pick<JevControllerOptions, "intervalMs">> &
     JevControllerOptions;
   running = false;
@@ -52,6 +53,7 @@ export class JevController {
     this.pressJump = 0;
     this.pressDuck = 0;
     this.wasAirborne = false;
+    this.lastNearestId = null;
     this.lastDecision = null;
     console.log(
       "%c[Jev]%c System One — atomic nouls in parallel, key holds composed in code",
@@ -82,10 +84,17 @@ export class JevController {
     const state = this.options.getState();
     if (!state) return;
 
+    const nearestId = state.visible[0]?.id ?? null;
+
     // Landing edge → ask immediately (second cactus often needs a fresh press).
     if (this.wasAirborne && state.dino.grounded) {
       void this.askJev();
     }
+    // Nearest obstacle changed (first scrolled past) → remap needs a fresh ask.
+    if (nearestId && nearestId !== this.lastNearestId && this.lastNearestId) {
+      void this.askJev();
+    }
+    this.lastNearestId = nearestId;
     this.wasAirborne = state.dino.airborne;
 
     this.applyHolds(state);
@@ -100,11 +109,13 @@ export class JevController {
     }
 
     // Recompose every frame from the last atomic answers + current state.
-    // Stops jump-spam: once already_jumped_for flips true, press_jump drops
-    // without waiting for another (slow) Jev round-trip.
+    // Remaps second_needs_jump when the former #2 becomes nearest.
     const atomic = this.lastDecision?.atomic;
     if (atomic) {
-      const composed = composeKeyHolds(atomic, state);
+      const composed = composeKeyHolds(atomic, state, {
+        nearest_id: this.lastDecision?.ask_nearest_id ?? null,
+        second_id: this.lastDecision?.ask_second_id ?? null,
+      });
       this.pressJump = composed.press_jump;
       this.pressDuck = composed.press_duck;
     }
@@ -129,6 +140,8 @@ export class JevController {
       press_jump,
       press_duck,
       atomic: this.lastDecision?.atomic ?? emptyAtomic(),
+      ask_nearest_id: this.lastDecision?.ask_nearest_id ?? null,
+      ask_second_id: this.lastDecision?.ask_second_id ?? null,
       confidence: Math.max(press_jump, press_duck),
       durationMs: this.lastDecision?.durationMs ?? 0,
       source,
@@ -172,8 +185,12 @@ export class JevController {
       };
       if (!this.running) return;
 
-      // Prefer press_* ; accept legacy jump_now/duck_now if a proxy remaps.
-      this.pressJump =
+      const askNearest = body.ask_nearest_id ?? state.visible[0]?.id ?? null;
+      const askSecond = body.ask_second_id ?? state.visible[1]?.id ?? null;
+      const atomic = body.atomic ?? emptyAtomic();
+
+      // Prefer server-composed press_*; recompose with ask context if needed.
+      let pressJump =
         typeof body.press_jump === "number"
           ? body.press_jump
           : typeof body.jump_now === "number"
@@ -181,7 +198,7 @@ export class JevController {
             : body.action === "jump"
               ? 0.9
               : 0.05;
-      this.pressDuck =
+      let pressDuck =
         typeof body.press_duck === "number"
           ? body.press_duck
           : typeof body.duck_now === "number"
@@ -190,16 +207,26 @@ export class JevController {
               ? 0.9
               : 0.05;
 
+      if (body.atomic) {
+        const composed = composeKeyHolds(atomic, state, {
+          nearest_id: askNearest,
+          second_id: askSecond,
+        });
+        pressJump = composed.press_jump;
+        pressDuck = composed.press_duck;
+      }
+
+      this.pressJump = pressJump;
+      this.pressDuck = pressDuck;
+
       this.lastDecision = {
-        action: pickAction(
-          this.pressJump,
-          this.pressDuck,
-          state.dino.airborne,
-        ),
-        press_jump: this.pressJump,
-        press_duck: this.pressDuck,
-        atomic: body.atomic ?? emptyAtomic(),
-        confidence: Math.max(this.pressJump, this.pressDuck),
+        action: pickAction(pressJump, pressDuck, state.dino.airborne),
+        press_jump: pressJump,
+        press_duck: pressDuck,
+        atomic,
+        ask_nearest_id: askNearest,
+        ask_second_id: askSecond,
+        confidence: Math.max(pressJump, pressDuck),
         durationMs: body.durationMs ?? 0,
         source: "jev",
       };

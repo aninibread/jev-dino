@@ -302,6 +302,8 @@ export async function handleApi(
               hold_jump_until_land: 0,
               speed_drop_now: 0,
             },
+            ask_nearest_id: null,
+            ask_second_id: null,
             confidence: 0,
             durationMs: 0,
             source: "none" as const,

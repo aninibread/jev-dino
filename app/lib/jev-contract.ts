@@ -106,6 +106,9 @@ export type DecideResponse = {
   press_duck: number;
   /** Raw parallel judgments (for console / tuning). */
   atomic: AtomicAnswers;
+  /** Obstacle ids this atomic batch was asked about (for stale remapping). */
+  ask_nearest_id: string | null;
+  ask_second_id: string | null;
   confidence: number;
   durationMs: number;
   source: "jev" | "none";
@@ -155,47 +158,90 @@ export function pickAction(
 /**
  * Compose key holds from atomic nouls + physics constraints (Typesafe pattern:
  * narrow parallel questions → deterministic composition in code).
+ *
+ * Important for consecutive cacti: atomics go stale when the nearest id changes
+ * (first scrolls past, second becomes nearest). Remap second_needs_jump onto the
+ * new nearest when ask_second_id matches.
  */
 export function composeKeyHolds(
   atomic: AtomicAnswers,
   state: DecideState,
+  ask?: { nearest_id: string | null; second_id: string | null } | null,
 ): { press_jump: number; press_duck: number } {
   const { dino, constraints, visible } = state;
   const nearest = visible[0];
+  const second = visible[1];
+
+  // Which atomic "jump this one?" belief applies to the current nearest?
+  let jumpThisNearest = atomic.nearest_needs_jump;
+  if (
+    ask?.second_id &&
+    nearest?.id === ask.second_id &&
+    ask.nearest_id !== nearest.id
+  ) {
+    // Nearest is what used to be #2 — use the second_* judgment.
+    jumpThisNearest = Math.max(
+      atomic.second_needs_jump,
+      atomic.nearest_needs_jump,
+    );
+  }
+
+  // Chain intent: jump again soon after clearing the first.
+  const chainIntent = Math.max(
+    atomic.hold_jump_until_land,
+    atomic.second_needs_jump,
+    atomic.gap_is_tight >= 0.5 ? atomic.second_needs_jump : 0,
+  );
+  const wantsChain = chainIntent >= 0.45 && Boolean(second);
 
   let press_jump = 0;
   let press_duck = 0;
 
   if (dino.airborne) {
-    // In air: jump key = intent to jump on landing; duck = speed-drop.
-    press_jump = atomic.hold_jump_until_land;
+    // Hold jump through landing when a follow-up is needed.
+    press_jump = wantsChain
+      ? Math.max(atomic.hold_jump_until_land, chainIntent)
+      : atomic.hold_jump_until_land;
     if (constraints.mid_air_duck_means_speed_drop) {
-      press_duck = Math.max(atomic.speed_drop_now, atomic.nearest_needs_duck);
+      // Slam down when the gap is tight so we can jump the second in time —
+      // but not while still rising into the first obstacle.
+      const pastFirst = Boolean(nearest?.already_jumped_for) || !dino.ascending;
+      const slam = Math.max(
+        atomic.speed_drop_now,
+        wantsChain && pastFirst && atomic.gap_is_tight >= 0.5
+          ? atomic.gap_is_tight
+          : 0,
+        atomic.nearest_needs_duck,
+      );
+      press_duck = slam;
     }
   } else if (nearest?.already_jumped_for) {
-    // Already committed a jump to the nearest hazard — do not re-jump it.
-    // Only press jump again for a tight second obstacle.
-    const chain =
-      atomic.second_needs_jump >= 0.55 && atomic.gap_is_tight >= 0.55;
-    press_jump = chain
-      ? Math.max(atomic.second_needs_jump, atomic.hold_jump_until_land)
-      : 0;
+    // Don't re-jump the cleared nearest — jump for the second if chaining.
+    press_jump = wantsChain ? chainIntent : 0;
     press_duck = atomic.nearest_needs_duck;
   } else {
-    press_jump = atomic.nearest_needs_jump;
-    if (atomic.second_needs_jump >= 0.55 && atomic.gap_is_tight >= 0.55) {
-      press_jump = Math.max(press_jump, atomic.hold_jump_until_land);
+    // Fresh nearest (or remapped former-second).
+    press_jump = jumpThisNearest;
+    if (wantsChain) {
+      press_jump = Math.max(press_jump, chainIntent);
     }
     press_duck = atomic.nearest_needs_duck;
   }
 
   // High bird you can run under — don't jump into it.
   if (nearest?.bird_altitude === "high" || atomic.nearest_run_under >= 0.65) {
-    press_jump = Math.min(press_jump, 0.12);
+    // Still allow jump if we're chaining onto a non-high second that is now nearest.
+    if (!(nearest?.id === ask?.second_id && jumpThisNearest >= 0.45)) {
+      press_jump = Math.min(press_jump, 0.12);
+    }
   }
 
   if (!constraints.can_jump_this_frame) {
-    press_jump = dino.airborne ? atomic.hold_jump_until_land : 0;
+    press_jump = dino.airborne
+      ? wantsChain
+        ? Math.max(atomic.hold_jump_until_land, chainIntent)
+        : atomic.hold_jump_until_land
+      : 0;
   }
 
   return {
@@ -372,6 +418,20 @@ export function buildSystemOneState(state: DecideState) {
       recent_actions: recent,
     },
     visible_obstacles: obstacles,
+    /** First visible obstacle you have not already jumped for (if any). */
+    next_not_yet_jumped: (() => {
+      const next = state.visible.find((o) => !o.already_jumped_for);
+      if (!next) return null;
+      return {
+        id: next.id,
+        type: next.type,
+        distance_px: Math.round(next.dx),
+        seconds_until_front_edge: Number(next.seconds_away.toFixed(3)),
+        already_jumped_for: next.already_jumped_for,
+        size: describeObstacleSize(next, state.px_per_sec),
+        ...(next.bird_altitude ? { bird_altitude: next.bird_altitude } : {}),
+      };
+    })(),
     gap_between_1st_and_2nd_px: state.gap_px,
     constraints: state.constraints,
   };
@@ -492,14 +552,15 @@ export function buildSystemOneQuestions(hasSecond: boolean) {
           "`visible_obstacles[1].size`",
         ],
         focus:
-          "True ONLY when a second cactus/bird still needs a jump soon after this arc. If last_couple_of_actions shows a single jump with a comfortable gap ahead, answer false — do not keep the jump key stuck on.",
+          "True when a second cactus / low bird is close after this jump (see gap_between_1st_and_2nd_px and visible_obstacles[1]). Holding jump makes you jump again the instant you land — required for consecutive cacti. False only for a lone obstacle or a wide comfortable gap.",
       },
       criteria: noulCriteria(
         "Keep jump held through landing for a follow-up jump.",
         "Release jump — single obstacle or comfortable gap.",
         [
-          "Airborne after first of two close cacti",
-          "just_landed with next large cactus close",
+          "Two cacti close together — airborne over the first",
+          "just_landed with next cactus still close",
+          "gap_between_1st_and_2nd_px small at current speed",
         ],
         ["Single cactus with wide gap", "High bird — don't jump"],
       ),
@@ -513,19 +574,21 @@ export function buildSystemOneQuestions(hasSecond: boolean) {
           "`dino.in_the_air`",
           "`constraints.mid_air_duck_means_speed_drop`",
           "`gap_between_1st_and_2nd_px`",
+          "`visible_obstacles[0].already_jumped_for`",
+          "`visible_obstacles[1]`",
           "`visible_obstacles[0].size.width_px`",
           "`visible_obstacles[0].size.seconds_to_fully_clear`",
           "`memory.recent_actions`",
           "`memory.action_sequence`",
         ],
         focus:
-          "Only when airborne, first obstacle already_jumped_for, second jumpable is tight. Wide first obstacles leave less airtime after clearing.",
+          "When airborne over the first of two close jumpables, slam down after the apex so you land in time to jump the second. True for tight consecutive cacti.",
       },
       criteria: noulCriteria(
         "Slam down now to land in time for the next jump.",
         "Ride the normal arc — gap is comfortable.",
-        ["Two cacti with small gap, past apex"],
-        ["Single obstacle", "Still rising toward first hazard"],
+        ["Two cacti with small gap, past apex / already_jumped_for on first"],
+        ["Single obstacle", "Still rising toward first hazard", "Wide gap"],
       ),
     },
   };
@@ -541,14 +604,15 @@ export function buildSystemOneQuestions(hasSecond: boolean) {
           "`visible_obstacles[1].size`",
           "`visible_obstacles[1].size.height_vs_standing_dino`",
           "`visible_obstacles[1].size.how_big`",
+          "`gap_between_1st_and_2nd_px`",
         ],
         focus:
-          "Ground cactus or low bird — not high birds you run under. Large/tall second cacti still need a jump.",
+          "Ground cactus or low bird — not high birds you run under. If true, you must land and jump again quickly (hold jump / speed-drop).",
       },
       criteria: noulCriteria(
         "Second obstacle needs a jump after clearing the first.",
         "Second does not need a jump (high bird, far, or bird to duck).",
-        ["Second large cactus 0.3s after first"],
+        ["Second cactus right after the first", "Two cacti in a row"],
         ["Second is high bird", "Second very far away"],
       ),
     };
@@ -567,7 +631,7 @@ export function buildSystemOneQuestions(hasSecond: boolean) {
           "`memory.recent_actions`",
         ],
         focus:
-          "Small pixel gap at current speed — especially after a wide first cactus. Needs speed-drop or holding jump through landing.",
+          "Small pixel gap at current speed — especially after a wide first cactus. If true, hold jump through landing and/or speed-drop. Consecutive cacti usually need this.",
       },
       criteria: noulCriteria(
         "Gap is tight — need chain (speed-drop or jump-on-land).",

@@ -65,12 +65,16 @@ export function parseDecideResponse(
 ): Omit<DecideResponse, "durationMs" | "source"> {
   const atomic = parseAtomicAnswers(value);
   const hasAtomic = ATOMIC_KEYS.some((key) => findNoul(value, key) !== null);
+  const ask = {
+    nearest_id: state.visible[0]?.id ?? null,
+    second_id: state.visible[1]?.id ?? null,
+  };
 
   let press_jump: number;
   let press_duck: number;
 
   if (hasAtomic) {
-    ({ press_jump, press_duck } = composeKeyHolds(atomic, state));
+    ({ press_jump, press_duck } = composeKeyHolds(atomic, state, ask));
   } else {
     // Legacy broad nouls (older deployments / proxies).
     const legacyJump =
@@ -90,6 +94,8 @@ export function parseDecideResponse(
     press_jump,
     press_duck,
     atomic,
+    ask_nearest_id: ask.nearest_id,
+    ask_second_id: ask.second_id,
     confidence: Math.max(
       press_jump,
       press_duck,
