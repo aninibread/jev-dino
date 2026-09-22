@@ -55,11 +55,13 @@ export function calculateActionProximityThreshold({
 
 /**
  * Short-jump early drop is code-owned timing (same duck physics as the player).
- * Press duck once most of the target has scrolled past the dino — earlier than
- * a full trailing-edge clear — so a short still crosses the obstacle but lands
- * ready for the next one. A human mid-air duck uses the identical speed-drop.
+ * Press duck slightly before the trailing edge fully clears the dino — enough
+ * to recover sooner for a tight follow-up, not so early that a small cactus
+ * triggers an instant slam at min-height. A human mid-air duck uses the
+ * identical speed-drop.
  */
-export const SHORT_DROP_WIDTH_RATIO = 0.55;
+/** How many px early (trailing edge still overlapping the dino) we may duck. */
+export const SHORT_DROP_EARLY_PX = 10;
 
 export function obstacleClearedForShortDrop({
   dinosaurX,
@@ -69,13 +71,13 @@ export function obstacleClearedForShortDrop({
   dinosaurX: number;
   obstacleX: number;
   obstacleWidth: number;
-  /** @deprecated Ignored; earlier duck is controlled by SHORT_DROP_WIDTH_RATIO. */
+  /** @deprecated Ignored; earlier duck is controlled by SHORT_DROP_EARLY_PX. */
   marginPx?: number;
 }): boolean {
-  const width = Math.max(0, Number(obstacleWidth) || 0);
-  // Trailing edge need not fully pass the dino — once this fraction of the
-  // width is behind dinosaurX, the shared speed-drop can start.
+  // Full clear is trailingEdge < dinosaurX. Allow a small overlap so shorts
+  // start the shared speed-drop a touch early without jumping-then-slamming.
   return (
-    Number(obstacleX) + width * SHORT_DROP_WIDTH_RATIO < Number(dinosaurX)
+    Number(obstacleX) + Math.max(0, Number(obstacleWidth) || 0) <
+    Number(dinosaurX) + SHORT_DROP_EARLY_PX
   );
 }
