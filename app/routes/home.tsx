@@ -55,8 +55,9 @@ function Rules() {
         On phones: tap the track or Jump; hold Duck for birds.
       </p>
       <p>
-        <b>Jev</b> runs the bottom lane on the same obstacles, deciding jump,
-        duck, or run through Workers AI.
+        <b>Jev</b> runs the bottom lane on the same obstacles. For each
+        obstacle it picks jump, duck, or keep running once; the game times
+        the move.
       </p>
       <p>
         The track gets much faster over <b>60 seconds</b>. First crash loses.
@@ -143,7 +144,15 @@ export default function Home() {
               >
                 TypeSafe Jev
               </a>{" "}
-              on Cloudflare Workers AI.
+              on Cloudflare Workers AI. Per-obstacle maneuver timing inspired by{" "}
+              <a
+                href="https://github.com/joshlarsen/jev-t-rex-runner"
+                target="_blank"
+                rel="noreferrer"
+              >
+                joshlarsen/jev-t-rex-runner
+              </a>
+              .
             </p>
           </div>
         </Dialog>

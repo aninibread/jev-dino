@@ -18,6 +18,8 @@ export type DinoStatus = "WAITING" | "RUNNING" | "JUMPING" | "DUCKING" | "CRASHE
  * - Grounded: switch to DUCKING sprite/hitbox immediately.
  * - Mid-air: setSpeedDrop() — jumpVelocity = 1, fall 3× fast, then duck on land.
  */
+export type JumpProfile = "short" | "full";
+
 export class Dino {
   xPos = TREX.START_X;
   yPos = 0;
@@ -27,6 +29,8 @@ export class Dino {
   ducking = false;
   speedDrop = false;
   reachedMinHeight = false;
+  /** short = cut ascent at min height (jev-t-rex-runner); full = full arc. */
+  jumpProfile: JumpProfile = "full";
   status: DinoStatus = "WAITING";
   crashed = false;
   currentFrame = 0;
@@ -56,6 +60,7 @@ export class Dino {
     this.ducking = false;
     this.speedDrop = false;
     this.reachedMinHeight = false;
+    this.jumpProfile = "full";
     this.crashed = false;
     this.status = "WAITING";
     this.currentFrame = 0;
@@ -77,16 +82,18 @@ export class Dino {
     this.setStatus("RUNNING");
   }
 
-  jump() {
-    if (this.crashed || this.jumping) return;
+  jump(profile: JumpProfile = "full") {
+    if (this.crashed || this.jumping) return false;
     this.setStatus("JUMPING");
     this.jumpVelocity = TREX.INITIAL_JUMP_VELOCITY; // -10, airtime ~0.58s
     this.jumping = true;
     this.reachedMinHeight = false;
+    this.jumpProfile = profile === "short" ? "short" : "full";
     this.speedDrop = false;
     if (this.ducking) {
       this.ducking = false;
     }
+    return true;
   }
 
   endJump() {
@@ -157,11 +164,16 @@ export class Dino {
         this.jumpVelocity * SPEED_DROP_COEFFICIENT * framesElapsed,
       );
       this.jumpVelocity += GRAVITY * 1.5 * framesElapsed;
+      this.reachedMinHeight = true;
     } else {
       this.yPos += Math.round(this.jumpVelocity * framesElapsed);
       this.jumpVelocity += GRAVITY * framesElapsed;
       if (this.yPos < this.minJumpHeight) {
         this.reachedMinHeight = true;
+      }
+      // Short profile: cut ascent once min height is cleared (ref: jev-t-rex-runner).
+      if (this.jumpProfile === "short" && this.reachedMinHeight) {
+        this.endJump();
       }
     }
 
@@ -169,6 +181,7 @@ export class Dino {
       this.yPos = this.groundYPos;
       this.jumping = false;
       this.jumpVelocity = 0;
+      this.jumpProfile = "full";
       if (!this.crashed) {
         if (this.ducking) this.setStatus("DUCKING");
         else this.setStatus("RUNNING");

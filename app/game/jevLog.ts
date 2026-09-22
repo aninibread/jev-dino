@@ -1,117 +1,33 @@
-import {
-  ATOMIC_KEYS,
-  type AtomicAnswers,
-  type DecideResponse,
-  type DecideState,
-  type JevAction,
-  type UpcomingObstacle,
-} from "../lib/jev-contract";
+import type { DecideResponse } from "../lib/jev-contract";
 
 function pct(n: number): string {
   return `${Math.round(Math.min(1, Math.max(0, n)) * 100)}%`;
 }
 
-function fmtObstacle(o: UpcomingObstacle): string {
-  const alt = o.bird_altitude ? ` ${o.bird_altitude}` : "";
-  const jumped = o.already_jumped_for ? " jumped" : "";
-  const size = `${Math.round(o.width)}×${Math.round(o.height)}px`;
-  return `${o.type}${alt} ${o.relation} ${size} dx=${Math.round(o.dx)} ~${o.seconds_away.toFixed(2)}s${jumped}`;
-}
-
-function fmtWindow(visible: UpcomingObstacle[]): string {
-  if (!visible.length) return "(empty)";
-  return visible.map((o, i) => `${i + 1}.${fmtObstacle(o)}`).join(" · ");
-}
-
-function fmtDino(state: DecideState): string {
-  const d = state.dino;
-  if (d.just_landed) return "just-landed";
-  if (d.grounded) return d.ducking ? "ducking" : "grounded";
-  const dir = d.ascending ? "↑" : "↓";
-  return `airborne ${dir} ${d.seconds_aloft.toFixed(2)}s h=${d.jump_height_frac.toFixed(2)}`;
-}
-
-function fmtMemory(state: DecideState): string {
-  const c = state.controls;
-  const couple = state.recent_actions.slice(-3);
-  const seq = couple.map((e) => e.action).join("→") || c.current_action;
-  const decisions = state.last_decisions
-    .slice(-2)
-    .map((d) => `${d.action}(j=${pct(d.press_jump)})`)
-    .join(",");
-  return `act=${c.previous_action}(${c.previous_action_held_for_s.toFixed(2)}s)→${c.current_action}(${c.current_action_held_for_s.toFixed(2)}s) seq=${seq}${decisions ? ` decided=[${decisions}]` : ""} keys:j=${c.jump_key_held ? "1" : "0"}/d=${c.duck_key_held ? "1" : "0"}`;
-}
-
-function fmtAtomic(atomic: AtomicAnswers): string {
-  const hot = ATOMIC_KEYS.filter((key) => atomic[key] >= 0.35);
-  if (!hot.length) return "atomic: (all low)";
-  return hot.map((key) => `${key}=${pct(atomic[key])}`).join(" ");
-}
-
-function fmtConstraints(state: DecideState): string {
-  const c = state.constraints;
-  const parts: string[] = [];
-  if (!c.can_jump_this_frame) parts.push("no-jump");
-  if (c.mid_air_duck_means_speed_drop) parts.push("air-duck=slam");
-  if (state.gap_px !== null) parts.push(`gap=${state.gap_px}px`);
-  return parts.length ? parts.join(" ") : "constraints: ok";
-}
-
-export function formatJevAsk(state: DecideState): string {
-  const next = state.visible[0];
-  return [
-    `t=${state.t.toFixed(1)}s`,
-    `spd=${state.speed.toFixed(1)}`,
-    fmtDino(state),
-    fmtMemory(state),
-    fmtConstraints(state),
-    next ? `nearest: ${fmtObstacle(next)}` : "nearest: none",
-    `visible: ${fmtWindow(state.visible)}`,
-  ].join(" | ");
-}
-
-export function formatJevReply(
-  decision: DecideResponse,
-  state: DecideState,
-): string {
-  const next = state.visible[0];
-  return [
-    decision.action.toUpperCase(),
-    `jumpKey=${pct(decision.press_jump)}`,
-    `duckKey=${pct(decision.press_duck)}`,
-    fmtAtomic(decision.atomic),
-    `${Math.round(decision.durationMs)}ms`,
-    decision.source,
-    next ? `vs ${fmtObstacle(next)}` : "clear",
-  ].join(" | ");
-}
-
-export function formatJevAct(
-  from: JevAction,
-  to: JevAction,
-  decision: DecideResponse,
-  state: DecideState | null,
-): string {
-  const next = state?.visible[0];
-  return [
-    `${from.toUpperCase()} → ${to.toUpperCase()}`,
-    `jumpKey=${pct(decision.press_jump)} duckKey=${pct(decision.press_duck)}`,
-    decision.source,
-    next ? fmtObstacle(next) : "no hazard",
-  ].join(" | ");
-}
-
-export function logJevAsk(state: DecideState): void {
+export function logJevAsk(body: {
+  speed: number;
+  dinosaur_motion: string;
+  obstacle: {
+    id: string;
+    kind?: string;
+    type?: string;
+    group?: string;
+    flight_path?: string;
+    width_px?: number;
+    width?: number;
+  };
+}): void {
+  const o = body.obstacle;
   console.log(
-    `%c[Jev ask]%c ${formatJevAsk(state)}`,
+    `%c[Jev ask]%c ${o.id} ${o.kind ?? o.type} ${o.group ?? ""} ${o.flight_path ?? ""} w=${o.width_px ?? o.width} spd=${body.speed.toFixed(1)} motion=${body.dinosaur_motion}`,
     "color:#0a7;font-weight:600",
     "color:inherit",
   );
 }
 
 export function logJevReply(
-  decision: DecideResponse,
-  state: DecideState,
+  decision: DecideResponse & { effectiveJumpProfile?: string },
+  body: { obstacle: { id: string } },
 ): void {
   const color =
     decision.action === "jump"
@@ -119,24 +35,27 @@ export function logJevReply(
       : decision.action === "duck"
         ? "#06c"
         : "#666";
+  const profile =
+    decision.action === "jump"
+      ? ` ${decision.effectiveJumpProfile ?? decision.jump_profile}`
+      : "";
   console.log(
-    `%c[Jev reply]%c ${formatJevReply(decision, state)}`,
+    `%c[Jev reply]%c ${decision.action}${profile} conf=${pct(decision.confidence)} ${Math.round(decision.durationMs)}ms vs ${body.obstacle.id}`,
     `color:${color};font-weight:600`,
     "color:inherit",
   );
 }
 
 export function logJevAct(
-  from: JevAction,
-  to: JevAction,
+  from: string,
+  to: string,
   decision: DecideResponse,
-  state: DecideState | null,
+  _state: unknown,
 ): void {
   if (from === to) return;
-  const color =
-    to === "jump" ? "#c60" : to === "duck" ? "#06c" : "#666";
+  const color = to === "jump" ? "#c60" : to === "duck" ? "#06c" : "#666";
   console.log(
-    `%c[Jev act]%c ${formatJevAct(from, to, decision, state)}`,
+    `%c[Jev act]%c ${from.toUpperCase()} → ${to.toUpperCase()} (${decision.obstacle_id})`,
     `color:${color};font-weight:700`,
     "color:inherit",
   );

@@ -1,48 +1,73 @@
 import {
-  composeKeyHolds,
-  emptyAtomic,
-  pickAction,
+  BASE_SPEED,
+  TREX,
+} from "./constants";
+import {
+  CONFIDENCE_THRESHOLD,
+  birdAltitude,
+  flightPathFor,
+  maneuverToPresses,
+  toGroup,
+  toSemanticKind,
   type DecideResponse,
-  type DecideState,
-  type JevAction,
+  type DinosaurMotion,
+  type JumpProfile,
+  type Maneuver,
 } from "../lib/jev-contract";
+import { calculateActionProximityThreshold } from "../lib/timing";
+import type { Obstacle } from "./obstacles";
 import { logJevAct, logJevAsk, logJevReply } from "./jevLog";
 
+export type JevSnapshot = {
+  playing: boolean;
+  crashed: boolean;
+  speed: number;
+  dinosaurMotion: DinosaurMotion;
+  dinosaurX: number;
+  obstacles: Obstacle[];
+};
+
 export type JevControllerOptions = {
-  getState: () => DecideState | null;
+  getSnapshot: () => JevSnapshot | null;
   onDecision: (decision: DecideResponse) => void;
-  intervalMs?: number;
+};
+
+type PlanStatus =
+  | "pending"
+  | "ready"
+  | "late"
+  | "ducking"
+  | "executed"
+  | "skipped"
+  | "error";
+
+type Plan = {
+  obstacleId: string;
+  obstacle: Obstacle;
+  status: PlanStatus;
+  abort: AbortController;
+  requestedAt: number;
+  decision?: DecideResponse & { effectiveJumpProfile: JumpProfile };
 };
 
 /**
- * Fair control loop with sticky key holds.
- * Duck/jump thrash came from recomposing noisy nouls every frame and
- * re-asking Jev as fast as possible — hold decisions until the hazard clears.
+ * Per-obstacle planner (joshlarsen/jev-t-rex-runner style):
+ * ask Jev once when an obstacle appears; code owns proximity timing + duck hold.
  */
 export class JevController {
-  private timer: ReturnType<typeof setInterval> | null = null;
   private frameHook: number | null = null;
-  private inflight: AbortController | null = null;
-  private lastAction: JevAction = "run";
+  private seen = new Set<string>();
+  private plans = new Map<string, Plan>();
+  private lastAction: "run" | "jump" | "duck" = "run";
   private lastDecision: DecideResponse | null = null;
   private pressJump = 0;
   private pressDuck = 0;
-  private wasAirborne = false;
-  private lastNearestId: string | null = null;
-  /** Sticky duck until this obstacle id has passed (or timeout). */
-  private duckStickyId: string | null = null;
-  private duckStickyUntilMs = 0;
-  /** Sticky jump-through-landing until we leave the ground or timeout. */
-  private jumpStickyUntilMs = 0;
-  private nowMs = 0;
-  private lastAskAtMs = 0;
-  private options: Required<Pick<JevControllerOptions, "intervalMs">> &
-    JevControllerOptions;
+  private jumpProfile: JumpProfile = "full";
+  private options: JevControllerOptions;
   running = false;
 
   constructor(options: JevControllerOptions) {
-    // Ask less often — atomics persist; spam caused thrash.
-    this.options = { intervalMs: 220, ...options };
+    this.options = options;
   }
 
   get action() {
@@ -53,32 +78,29 @@ export class JevController {
     return this.lastDecision;
   }
 
-  /** Raw key-hold beliefs — apply both independently (jump + mid-air duck). */
   get keys() {
-    return { jump: this.pressJump, duck: this.pressDuck };
+    return {
+      jump: this.pressJump,
+      duck: this.pressDuck,
+      jumpProfile: this.jumpProfile,
+    };
   }
 
   start() {
     this.stop();
     this.running = true;
+    this.seen.clear();
+    this.plans.clear();
     this.lastAction = "run";
+    this.lastDecision = null;
     this.pressJump = 0;
     this.pressDuck = 0;
-    this.wasAirborne = false;
-    this.lastNearestId = null;
-    this.duckStickyId = null;
-    this.duckStickyUntilMs = 0;
-    this.jumpStickyUntilMs = 0;
-    this.nowMs = 0;
-    this.lastAskAtMs = 0;
-    this.lastDecision = null;
+    this.jumpProfile = "full";
     console.log(
-      "%c[Jev]%c System One — sticky key holds, calmer asks",
+      "%c[Jev]%c per-obstacle maneuvers — code owns timing (ref: jev-t-rex-runner)",
       "color:#0a7;font-weight:700",
       "color:inherit",
     );
-    this.timer = setInterval(() => void this.askJev(), this.options.intervalMs);
-    void this.askJev();
     const tick = () => {
       if (!this.running) return;
       this.onFrame();
@@ -89,212 +111,235 @@ export class JevController {
 
   stop() {
     this.running = false;
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
     if (this.frameHook) cancelAnimationFrame(this.frameHook);
     this.frameHook = null;
-    this.inflight?.abort();
-    this.inflight = null;
+    for (const plan of this.plans.values()) plan.abort.abort();
+    this.plans.clear();
+    this.seen.clear();
+    this.pressJump = 0;
+    this.pressDuck = 0;
   }
 
   private onFrame() {
-    const state = this.options.getState();
-    if (!state) return;
-
-    this.nowMs = state.t * 1000;
-    const nearestId = state.visible[0]?.id ?? null;
-
-    if (this.wasAirborne && state.dino.grounded) {
-      // Landing: allow a fresh ask, keep jump sticky briefly for chains.
-      if (this.pressJump >= 0.4) {
-        this.jumpStickyUntilMs = this.nowMs + 180;
-      }
-      void this.askJev(true);
-    }
-    if (nearestId && nearestId !== this.lastNearestId && this.lastNearestId) {
-      void this.askJev(true);
-    }
-    this.lastNearestId = nearestId;
-    this.wasAirborne = state.dino.airborne;
-
-    this.applyHolds(state);
-  }
-
-  private applyHolds(state: DecideState) {
-    if (state.visible.length === 0) {
+    const snapshot = this.options.getSnapshot();
+    if (!snapshot || !snapshot.playing || snapshot.crashed) {
       this.pressJump = 0;
       this.pressDuck = 0;
-      this.duckStickyId = null;
-      this.emitAction("run", 0, 0, "jev", state);
       return;
     }
-
-    const nearest = state.visible[0]!;
-    const atomic = this.lastDecision?.atomic;
-    if (atomic) {
-      const composed = composeKeyHolds(atomic, state, {
-        nearest_id: this.lastDecision?.ask_nearest_id ?? null,
-        second_id: this.lastDecision?.ask_second_id ?? null,
-      });
-      this.pressJump = composed.press_jump;
-      this.pressDuck = composed.press_duck;
-    }
-
-    // --- Sticky duck: hold crouch through a mid bird until it passes ---
-    const birdNeedsDuck =
-      nearest.type === "bird" &&
-      nearest.bird_altitude === "mid" &&
-      nearest.relation !== "passing";
-
-    if (this.pressDuck >= 0.5 && birdNeedsDuck) {
-      this.duckStickyId = nearest.id;
-      // Hold at least through estimated clear time, min 280ms.
-      const clearMs = Math.max(280, (nearest.seconds_away + 0.2) * 1000);
-      this.duckStickyUntilMs = this.nowMs + Math.min(clearMs, 900);
-    }
-
-    if (this.duckStickyId) {
-      const sticky = state.visible.find((o) => o.id === this.duckStickyId);
-      const stillRelevant =
-        sticky &&
-        sticky.relation !== "passing" &&
-        sticky.dx + sticky.width > -8;
-      if (stillRelevant || this.nowMs < this.duckStickyUntilMs) {
-        this.pressDuck = Math.max(this.pressDuck, 0.85);
-        // Don't jump into a bird we're ducking under.
-        if (!state.dino.airborne) this.pressJump = Math.min(this.pressJump, 0.15);
-      } else {
-        this.duckStickyId = null;
-      }
-    }
-
-    // --- Sticky jump: keep jump held briefly through landing for chains ---
-    if (this.pressJump >= 0.55 && (state.dino.airborne || state.dino.just_landed)) {
-      this.jumpStickyUntilMs = Math.max(this.jumpStickyUntilMs, this.nowMs + 200);
-    }
-    if (this.nowMs < this.jumpStickyUntilMs && !this.duckStickyId) {
-      this.pressJump = Math.max(this.pressJump, 0.7);
-    }
-
-    // Grounded + duck sticky wins over jump.
-    if (!state.dino.airborne && this.pressDuck >= 0.55) {
-      this.pressJump = Math.min(this.pressJump, 0.2);
-    }
-
-    const action = pickAction(
-      this.pressJump,
-      this.pressDuck,
-      state.dino.airborne,
-      this.lastAction,
-    );
-    this.emitAction(action, this.pressJump, this.pressDuck, "jev", state);
+    this.observeObstacles(snapshot);
+    this.executePlans(snapshot);
   }
 
-  private emitAction(
-    action: JevAction,
-    press_jump: number,
-    press_duck: number,
-    source: DecideResponse["source"],
-    state: DecideState | null = null,
-  ) {
-    const decision: DecideResponse = {
-      action,
-      press_jump,
-      press_duck,
-      atomic: this.lastDecision?.atomic ?? emptyAtomic(),
-      ask_nearest_id: this.lastDecision?.ask_nearest_id ?? null,
-      ask_second_id: this.lastDecision?.ask_second_id ?? null,
-      confidence: Math.max(press_jump, press_duck),
-      durationMs: this.lastDecision?.durationMs ?? 0,
-      source,
+  private observeObstacles(snapshot: JevSnapshot) {
+    for (const obstacle of snapshot.obstacles) {
+      if (obstacle.remove || this.seen.has(obstacle.id)) continue;
+      this.seen.add(obstacle.id);
+      void this.requestDecision(obstacle, snapshot);
+    }
+  }
+
+  private async requestDecision(obstacle: Obstacle, snapshot: JevSnapshot) {
+    const abort = new AbortController();
+    const plan: Plan = {
+      obstacleId: obstacle.id,
+      obstacle,
+      status: "pending",
+      abort,
+      requestedAt: performance.now(),
     };
-    const changed = action !== this.lastAction;
-    const from = this.lastAction;
-    this.lastAction = action;
-    this.lastDecision = decision;
-    if (changed) {
-      logJevAct(from, action, decision, state ?? this.options.getState());
-      this.options.onDecision(decision);
-    }
-  }
+    this.plans.set(obstacle.id, plan);
 
-  private async askJev(force = false) {
-    if (!this.running) return;
-    if (this.inflight) return;
-    // Rate-limit non-forced asks so atomics can settle.
-    if (!force && this.nowMs - this.lastAskAtMs < this.options.intervalMs - 20) {
-      return;
-    }
+    const type = obstacle.typeConfig.kind;
+    const alt = type === "bird" ? birdAltitude(obstacle.yPos) : undefined;
+    const body = {
+      speed: snapshot.speed,
+      dinosaur_motion: snapshot.dinosaurMotion,
+      obstacle: {
+        id: obstacle.id,
+        type,
+        size: obstacle.size,
+        width: obstacle.width,
+        y: obstacle.yPos,
+        bird_altitude: alt,
+        kind: toSemanticKind(type),
+        group: toGroup(obstacle.size),
+        flight_path: flightPathFor(type, alt),
+        width_px: Math.round(obstacle.width),
+      },
+    };
 
-    const state = this.options.getState();
-    if (!state) return;
-    if (state.visible.length === 0) return;
-
-    const controller = new AbortController();
-    this.inflight = controller;
-    this.lastAskAtMs = this.nowMs;
-    logJevAsk(state);
+    logJevAsk(body);
 
     try {
       const response = await fetch("/api/jev-decide", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(state),
-        signal: AbortSignal.any([
-          controller.signal,
-          AbortSignal.timeout(2800),
-        ]),
+        body: JSON.stringify(body),
+        signal: AbortSignal.any([abort.signal, AbortSignal.timeout(2800)]),
       });
       if (!response.ok) throw new Error(`decide failed (${response.status})`);
-      const body = (await response.json()) as DecideResponse & {
-        jump_now?: number;
-        duck_now?: number;
-      };
+      const decision = (await response.json()) as DecideResponse;
       if (!this.running) return;
+      if (this.plans.get(obstacle.id) !== plan || plan.status !== "pending") {
+        return;
+      }
 
-      const askNearest = body.ask_nearest_id ?? state.visible[0]?.id ?? null;
-      const askSecond = body.ask_second_id ?? state.visible[1]?.id ?? null;
-      const atomic = body.atomic ?? emptyAtomic();
+      const shortOk =
+        body.obstacle.kind === "small_cactus" &&
+        body.obstacle.group === "single";
+      const effectiveJumpProfile: JumpProfile =
+        decision.action === "jump" &&
+        decision.jump_profile === "short" &&
+        decision.confidence >= CONFIDENCE_THRESHOLD &&
+        shortOk
+          ? "short"
+          : "full";
 
-      const live = this.options.getState() ?? state;
-      const composed = composeKeyHolds(atomic, live, {
-        nearest_id: askNearest,
-        second_id: askSecond,
-      });
-
-      this.pressJump = composed.press_jump;
-      this.pressDuck = composed.press_duck;
-
-      this.lastDecision = {
-        action: pickAction(
-          this.pressJump,
-          this.pressDuck,
-          live.dino.airborne,
-          this.lastAction,
-        ),
-        press_jump: this.pressJump,
-        press_duck: this.pressDuck,
-        atomic,
-        ask_nearest_id: askNearest,
-        ask_second_id: askSecond,
-        confidence: Math.max(this.pressJump, this.pressDuck),
-        durationMs: body.durationMs ?? 0,
-        source: "jev",
+      const enriched = {
+        ...decision,
+        effectiveJumpProfile,
+        durationMs: decision.durationMs ?? performance.now() - plan.requestedAt,
       };
-      logJevReply(this.lastDecision, live);
-      this.options.onDecision(this.lastDecision);
-      this.applyHolds(live);
+      plan.decision = enriched;
+      this.lastDecision = enriched;
+      logJevReply(enriched, body);
+
+      if (decision.source === "none" || decision.confidence < CONFIDENCE_THRESHOLD) {
+        plan.status = "skipped";
+        console.log(
+          "%c[Jev]%c skipped (low confidence or error) %s",
+          "color:#666;font-weight:600",
+          "color:inherit",
+          decision.action,
+        );
+        return;
+      }
+
+      plan.status = "ready";
+      this.options.onDecision(enriched);
     } catch (error) {
       if ((error as Error)?.name === "AbortError") return;
+      if (this.plans.get(obstacle.id) !== plan) return;
+      plan.status = "error";
       console.log(
-        "%c[Jev reply]%c (request failed — holding last keys) %s",
+        "%c[Jev reply]%c (request failed) %s",
         "color:#666;font-weight:600",
         "color:inherit",
         error instanceof Error ? error.message : "request failed",
       );
-    } finally {
-      if (this.inflight === controller) this.inflight = null;
-      // Do NOT immediately chain another ask — that thrashed duck/jump.
+    }
+  }
+
+  private executePlans(snapshot: JevSnapshot) {
+    // Default: release keys unless a plan is actively ducking / about to jump.
+    let wantJump = false;
+    let wantDuck = false;
+    let acted: Maneuver | "run" = "run";
+
+    for (const [id, plan] of this.plans) {
+      const obstacle = plan.obstacle;
+      const passed =
+        obstacle.remove ||
+        obstacle.xPos + obstacle.width < snapshot.dinosaurX - 4;
+
+      if (passed) {
+        if (plan.status === "ducking") {
+          wantDuck = false;
+        }
+        this.plans.delete(id);
+        continue;
+      }
+
+      const action = plan.decision?.action ?? "jump";
+      const jumpProfile = plan.decision?.effectiveJumpProfile ?? "full";
+      const threshold = calculateActionProximityThreshold({
+        baseSpeed: BASE_SPEED,
+        currentSpeed: snapshot.speed,
+        dinosaurX: snapshot.dinosaurX,
+        obstacleWidth: obstacle.width,
+        action,
+        jumpProfile,
+      });
+
+      if (obstacle.xPos > threshold) {
+        // Still too far — wait. Keep duck held if already ducking this one.
+        if (plan.status === "ducking") {
+          wantDuck = true;
+          acted = "duck";
+        }
+        continue;
+      }
+
+      if (plan.status === "pending") {
+        // Decision too late — abort and skip (no thrash fallback).
+        plan.status = "late";
+        plan.abort.abort();
+        console.log(
+          "%c[Jev]%c late — skipped %s",
+          "color:#c60;font-weight:600",
+          "color:inherit",
+          id,
+        );
+        continue;
+      }
+
+      if (plan.status === "ducking") {
+        wantDuck = true;
+        acted = "duck";
+        continue;
+      }
+
+      if (plan.status !== "ready") continue;
+
+      if (action === "jump") {
+        // Only jump when grounded; otherwise wait (don't spam).
+        if (snapshot.dinosaurMotion === "jumping") {
+          continue;
+        }
+        if (snapshot.dinosaurMotion === "ducking") {
+          // Stand up first next frames.
+          wantDuck = false;
+          continue;
+        }
+        wantJump = true;
+        this.jumpProfile = jumpProfile;
+        acted = "jump";
+        plan.status = "executed";
+        logJevAct(this.lastAction, "jump", plan.decision!, null);
+      } else if (action === "duck") {
+        if (snapshot.dinosaurMotion === "jumping") {
+          // Speed-drop then duck on land.
+          wantDuck = true;
+          acted = "duck";
+          continue;
+        }
+        wantDuck = true;
+        acted = "duck";
+        plan.status = "ducking";
+        logJevAct(this.lastAction, "duck", plan.decision!, null);
+      } else {
+        // keep_running — clear the plan; code does nothing.
+        plan.status = "executed";
+      }
+    }
+
+    this.pressJump = wantJump ? 0.95 : 0;
+    this.pressDuck = wantDuck ? 0.95 : 0;
+
+    const ui = wantDuck ? "duck" : wantJump ? "jump" : "run";
+    if (ui !== this.lastAction) {
+      this.lastAction = ui;
+      if (this.lastDecision) {
+        const presses = maneuverToPresses(
+          acted === "run" ? "keep_running" : acted,
+        );
+        this.options.onDecision({
+          ...this.lastDecision,
+          press_jump: presses.press_jump,
+          press_duck: presses.press_duck,
+        });
+      }
     }
   }
 }
