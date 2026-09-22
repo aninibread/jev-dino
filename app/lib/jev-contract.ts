@@ -95,6 +95,12 @@ export const EMPTY_PROFILE_PROBABILITIES: JumpProfileProbabilities = {
 /** Gaps at or below this (seconds) count as a tight follow-up for short recovery. */
 export const TIGHT_NEXT_SECONDS = 0.85;
 
+/**
+ * Gaps this tight (or tighter) usually need a full hop — there is no room to
+ * land and re-act before the next obstacle at race speed.
+ */
+export const ULTRA_TIGHT_SECONDS = 0.3;
+
 export function likelyManeuverFor(
   flightPath: FlightPath,
 ): Maneuver {

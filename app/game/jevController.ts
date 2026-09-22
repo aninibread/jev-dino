@@ -10,6 +10,7 @@ import {
   EMPTY_PROBABILITIES,
   EMPTY_PROFILE_PROBABILITIES,
   TIGHT_NEXT_SECONDS,
+  ULTRA_TIGHT_SECONDS,
   birdAltitude,
   flightPathFor,
   shortRecoveryAllowed,
@@ -49,9 +50,11 @@ export type JevIoStatus =
 
 export type JevIoView = {
   status: JevIoStatus;
+  profileStatus: JevIoStatus;
   ask: JevAskView | null;
   decision: DecideResponse | null;
   error?: string | null;
+  profileError?: string | null;
 };
 
 export type JevControllerOptions = {
@@ -131,6 +134,8 @@ export class JevController {
   private lastAsk: JevAskView | null = null;
   private lastStatus: JevIoStatus = "idle";
   private lastError: string | null = null;
+  private lastProfileStatus: JevIoStatus = "idle";
+  private lastProfileError: string | null = null;
   private pressJump = 0;
   private pressDuck = 0;
   private jumpProfile: JumpProfile = "full";
@@ -172,15 +177,36 @@ export class JevController {
     ask = this.lastAsk,
     decision = this.lastDecision,
     error: string | null = null,
+    profileStatus = this.lastProfileStatus,
+    profileError: string | null = this.lastProfileError,
   ) {
     this.lastStatus = status;
     this.lastError = status === "error" ? error : null;
+    this.lastProfileStatus = profileStatus;
+    this.lastProfileError =
+      profileStatus === "error" ? profileError : null;
     this.options.onIo({
       status,
+      profileStatus,
       ask,
       decision,
       error: this.lastError,
+      profileError: this.lastProfileError,
     });
+  }
+
+  private emitProfile(
+    profileStatus: JevIoStatus,
+    profileError: string | null = null,
+  ) {
+    this.emitIo(
+      this.lastStatus,
+      this.lastAsk,
+      this.lastDecision,
+      this.lastError,
+      profileStatus,
+      profileError,
+    );
   }
 
   start() {
@@ -196,6 +222,8 @@ export class JevController {
     this.lastAsk = null;
     this.lastStatus = "idle";
     this.lastError = null;
+    this.lastProfileStatus = "idle";
+    this.lastProfileError = null;
     this.pressJump = 0;
     this.pressDuck = 0;
     this.jumpProfile = "full";
@@ -204,7 +232,7 @@ export class JevController {
       "color:#0a7;font-weight:700",
       "color:inherit",
     );
-    this.emitIo("idle", null, null);
+    this.emitIo("idle", null, null, null, "idle", null);
     const tick = () => {
       if (!this.running) return;
       this.onFrame();
@@ -421,7 +449,8 @@ export class JevController {
     this.plans.set(obstacle.id, plan);
     this.awaitingProfile.add(obstacle.id);
     this.lastAsk = ask;
-    this.emitIo("thinking", ask, null);
+    // Keep prior output bars mounted; mark both asks as in flight.
+    this.emitIo("thinking", ask, this.lastDecision, null, "idle", null);
 
     // Maneuver immediately; profile flushes once next (or deadline) is ready.
     this.enqueueFetch(async () => {
@@ -540,6 +569,7 @@ export class JevController {
   private queueJumpProfile(plan: Plan) {
     if (plan.profileQueued) return;
     plan.profileQueued = true;
+    this.emitProfile("thinking");
     this.enqueueFetch(async () => {
       if (!this.running || this.plans.get(plan.obstacleId) !== plan) return;
       if (
@@ -547,6 +577,7 @@ export class JevController {
         plan.status === "skipped" ||
         plan.status === "error"
       ) {
+        this.emitProfile("skipped");
         return;
       }
       await this.fetchJumpProfile(plan);
@@ -563,11 +594,20 @@ export class JevController {
     if (!shortRecoveryAllowed(action, ask.obstacle)) return "full";
 
     const next = ask.next_obstacle;
-    const tight =
-      !!next && next.seconds_until_next <= TIGHT_NEXT_SECONDS;
+    if (!next) return raw === "short" ? "short" : "full";
 
-    // Tight chains: prefer short so we are neutral for the next move.
-    // Trust Jev's short, or override a weak full.
+    // Extremely tight stacks at speed: one full hop often clears both;
+    // a short hop lands in the gap and fails.
+    if (
+      action === "jump" &&
+      next.seconds_until_next <= ULTRA_TIGHT_SECONDS
+    ) {
+      return "full";
+    }
+
+    const tight = next.seconds_until_next <= TIGHT_NEXT_SECONDS;
+
+    // Moderately tight chains: prefer short so we are neutral for the next move.
     if (tight) {
       if (raw === "short") return "short";
       if ((probs.short ?? 0) >= 0.3) return "short";
@@ -594,10 +634,17 @@ export class JevController {
 
     const raw = plan.profileResult;
     if (!raw) {
-      // Still waiting — for tight eligible chains, act short already.
+      // Still waiting — for moderately tight eligible chains, act short already.
+      // Ultra-tight jumps stay full (clear both / avoid landing in the gap).
       const next = plan.ask.next_obstacle;
+      const ultra =
+        !!next &&
+        action === "jump" &&
+        next.seconds_until_next <= ULTRA_TIGHT_SECONDS;
       const tight =
-        !!next && next.seconds_until_next <= TIGHT_NEXT_SECONDS;
+        !!next &&
+        !ultra &&
+        next.seconds_until_next <= TIGHT_NEXT_SECONDS;
       const earlyShort =
         tight && shortRecoveryAllowed(action, plan.ask.obstacle);
       plan.decision = {
@@ -705,6 +752,9 @@ export class JevController {
           plan.status === "ducking" ? this.lastStatus : "ready",
           plan.ask,
           plan.decision,
+          null,
+          "ready",
+          null,
         );
         console.log(
           `%c[Jev profile]%c ${plan.decision.effectiveJumpProfile} short=${Math.round((plan.decision.profile_probabilities.short ?? 0) * 100)}% full=${Math.round((plan.decision.profile_probabilities.full ?? 0) * 100)}% vs ${plan.obstacleId}`,
@@ -719,8 +769,19 @@ export class JevController {
         };
         if (this.lastDecision?.obstacle_id === plan.obstacleId) {
           this.lastDecision = plan.decision;
-          this.emitIo(this.lastStatus, plan.ask, plan.decision);
+          this.emitIo(
+            this.lastStatus,
+            plan.ask,
+            plan.decision,
+            this.lastError,
+            "ready",
+            null,
+          );
+        } else {
+          this.emitProfile("ready");
         }
+      } else {
+        this.emitProfile("ready");
       }
     } catch (error) {
       if (plan.abort.signal.aborted) return;
@@ -735,11 +796,13 @@ export class JevController {
         await this.fetchJumpProfile(plan, attempt + 1);
         return;
       }
+      const message =
+        error instanceof Error ? error.message : "request failed";
       console.log(
         "%c[Jev]%c jump profile missed after retries, keeping full (%s)",
         "color:#666;font-weight:600",
         "color:inherit",
-        error instanceof Error ? error.message : "request failed",
+        message,
       );
       plan.profileResult = {
         jump_profile: "full",
@@ -748,7 +811,16 @@ export class JevController {
       };
       if (plan.status === "ready" && plan.decision) {
         this.mergeProfileIntoDecision(plan);
-        this.emitIo("ready", plan.ask, plan.decision);
+        this.emitIo(
+          "ready",
+          plan.ask,
+          plan.decision,
+          null,
+          "error",
+          message,
+        );
+      } else {
+        this.emitProfile("error", message);
       }
     }
   }
