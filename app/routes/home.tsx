@@ -55,9 +55,9 @@ function Rules() {
         Phone: tap Jump; hold Duck for pterodactyls.
       </p>
       <p>
-        <b>Jev</b> runs the bottom lane on the same course. It sees the Input
-        panel, picks a <b>maneuver</b> (jump, duck, keep running) and a{" "}
-        <b>profile</b> (short or full). The browser times presses.
+        <b>Jev</b> races in the bottom lane. It gets inputs from the game and
+        decides what to do — jump, duck, or keep running — and if jumping,
+        whether that jump should be short or full.
       </p>
     </div>
   );
