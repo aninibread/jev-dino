@@ -38,6 +38,12 @@ export type RaceSnapshot = {
   jevIoError: string | null;
   jevProfileStatus: JevIoStatus;
   jevProfileError: string | null;
+  /** Successful typesafe/jev asks this round. */
+  jevAskCount: number;
+  /** Estimated input tokens this round. */
+  jevInputTokens: number;
+  /** Estimated USD cost this round (TypeSafe published rate). */
+  jevCostUsd: number;
 };
 
 export type RaceCallbacks = {
@@ -70,6 +76,9 @@ export class RaceGame {
   jevIoError: string | null = null;
   jevProfileStatus: JevIoStatus = "idle";
   jevProfileError: string | null = null;
+  jevAskCount = 0;
+  jevInputTokens = 0;
+  jevCostUsd = 0;
   private spectateElapsedMs = 0;
   /** Frozen bitmap of the YOU lane after crash (spectate / ended). */
   private youFreeze: HTMLCanvasElement | null = null;
@@ -101,6 +110,12 @@ export class RaceGame {
         this.jevProfileError = profileError ?? null;
         this.lastJevAsk = ask;
         this.lastJev = decision;
+        this.emit();
+      },
+      onCost: ({ asks, inputTokens, costUsd }) => {
+        this.jevAskCount = asks;
+        this.jevInputTokens = inputTokens;
+        this.jevCostUsd = costUsd;
         this.emit();
       },
     });
@@ -234,6 +249,9 @@ export class RaceGame {
     this.jevIoError = null;
     this.jevProfileStatus = "idle";
     this.jevProfileError = null;
+    this.jevAskCount = 0;
+    this.jevInputTokens = 0;
+    this.jevCostUsd = 0;
     this.duckHeld = false;
     this.you.startRunning();
     this.jev.startRunning();
@@ -450,6 +468,9 @@ export class RaceGame {
       jevIoError: this.jevIoError,
       jevProfileStatus: this.jevProfileStatus,
       jevProfileError: this.jevProfileError,
+      jevAskCount: this.jevAskCount,
+      jevInputTokens: this.jevInputTokens,
+      jevCostUsd: this.jevCostUsd,
     });
   }
 
