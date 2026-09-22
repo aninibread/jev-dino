@@ -40,6 +40,8 @@ export type DecideState = {
   dinosaur_motion: DinosaurMotion;
   obstacle: ObstacleDecisionState;
   next_obstacle: NextObstacleContext | null;
+  /** Set on the profile call once the maneuver reply is known. */
+  chosen_maneuver?: Maneuver | null;
 };
 
 /** Soft scores over the three maneuvers (from Jev choice probabilities). */
@@ -90,8 +92,26 @@ export const EMPTY_PROFILE_PROBABILITIES: JumpProfileProbabilities = {
   full: 0,
 };
 
-/** Gaps at or below this (seconds) count as a tight follow-up for short jumps. */
-export const TIGHT_NEXT_SECONDS = 0.55;
+/** Gaps at or below this (seconds) count as a tight follow-up for short recovery. */
+export const TIGHT_NEXT_SECONDS = 0.85;
+
+export function likelyManeuverFor(
+  flightPath: FlightPath,
+): Maneuver {
+  if (flightPath === "blocks_running_only") return "duck";
+  if (flightPath === "clears_running_dinosaur") return "keep_running";
+  return "jump";
+}
+
+/** Whether a short recovery is physically safe for this maneuver + obstacle. */
+export function shortRecoveryAllowed(
+  action: Maneuver,
+  obstacle: Pick<ObstacleDecisionState, "kind" | "group">,
+): boolean {
+  if (action === "keep_running") return false;
+  if (action === "duck") return true;
+  return obstacle.kind === "small_cactus" && obstacle.group === "single";
+}
 
 export function labelManeuver(action: Maneuver): string {
   if (action === "keep_running") return "Keep running";
@@ -180,6 +200,8 @@ export function maneuverToPresses(action: Maneuver): {
 }
 
 export function buildManeuverState(state: DecideState) {
+  const likely = likelyManeuverFor(state.obstacle.flight_path);
+  const chosen = state.chosen_maneuver ?? null;
   return {
     objective: "Avoid the target obstacle and keep the dinosaur alive.",
     current_speed: Number(state.speed.toFixed(2)),
@@ -190,6 +212,8 @@ export function buildManeuverState(state: DecideState) {
       flight_path: state.obstacle.flight_path,
       width_px: state.obstacle.width_px,
     },
+    likely_maneuver: likely,
+    chosen_maneuver: chosen,
     next_obstacle: state.next_obstacle
       ? {
           kind: state.next_obstacle.kind,
@@ -254,7 +278,7 @@ export function buildManeuverQuestions() {
 }
 
 /**
- * Recovery profile (fired in parallel with maneuver).
+ * Recovery profile (fired alongside maneuvers once next context is available).
  * short = get back to a neutral run sooner for the next jump/duck;
  * full = commit to the safer longer hop or duck hold.
  */
@@ -263,28 +287,27 @@ export function buildJumpProfileQuestions() {
     jump_profile: {
       type: "choice",
       instructions: [
-        "Assume the dinosaur will either jump or duck the target obstacle.",
-        "Choose a short or full recovery so it can return to a neutral running",
-        "pose in time for next_obstacle when needed.",
-        "If next_obstacle.is_tight_follow_up is true and the next hazard will",
-        "also need a jump or duck soon, prefer short so the dinosaur is ready",
-        "for that second move.",
-        "Browser code will calculate exact launch or duck timing from speed.",
+        "Choose short or full recovery for the target obstacle.",
+        "Use chosen_maneuver when present; otherwise use likely_maneuver",
+        "(duck for mid birds, jump for ground hazards / low birds).",
+        "When next_obstacle.is_tight_follow_up is true, prefer short so the",
+        "dinosaur returns to a neutral run in time for the next jump or duck.",
+        "When next_obstacle is null or not tight, prefer full.",
       ].join(" "),
       criteria: {
         short: {
           what: [
-            "Prefer when a tight next_obstacle follows that needs another jump",
-            "or duck soon: short hop (single small cactus) or brief duck so the",
-            "dinosaur stands up earlier.",
-            "Do not use a short hop for a large cactus, grouped cacti, or a",
-            "pterodactyl jump.",
+            "Choose short when next_obstacle.is_tight_follow_up is true and a",
+            "short recovery is safe: brief duck under a mid bird, or a short hop",
+            "over a single small cactus.",
+            "Short means stand up / land earlier for the second move.",
           ].join(" "),
         },
         full: {
           what: [
-            "Use the safer longer hop or duck hold when the next hazard is far,",
-            "null, uncertain, or the target needs maximum clearance.",
+            "Choose full when next is null/far, or the target needs maximum",
+            "clearance: large cactus, grouped cacti, low bird jumps, or any",
+            "uncertain clearance.",
           ].join(" "),
         },
       },

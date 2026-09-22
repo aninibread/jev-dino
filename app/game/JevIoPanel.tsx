@@ -142,7 +142,9 @@ export function JevIoPanel({
   const profileProbs =
     decision?.profile_probabilities ?? EMPTY_PROFILE_PROBABILITIES;
   const chosenProfile =
-    decision?.action === "jump" ? decision.jump_profile : null;
+    decision?.action === "jump" || decision?.action === "duck"
+      ? decision.jump_profile
+      : null;
   const profileSum =
     (profileProbs.short ?? 0) + (profileProbs.full ?? 0);
   const showProfileBars =
