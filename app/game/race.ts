@@ -12,10 +12,14 @@ import {
 } from "./constants";
 import { Dino } from "./dino";
 import { CloudField, HorizonLine } from "./horizon";
-import { JevController, type JevSnapshot } from "./jevController";
+import { JevController, type JevIoStatus, type JevSnapshot } from "./jevController";
 import { ObstacleManager } from "./obstacles";
 import { MAX_SPEED, stepSpeed } from "./speedCurve";
-import type { DecideResponse, DinosaurMotion } from "../lib/jev-contract";
+import type {
+  DecideResponse,
+  DinosaurMotion,
+  JevAskView,
+} from "../lib/jev-contract";
 
 export type RacePhase = "idle" | "playing" | "spectating" | "ended";
 export type Winner = "you" | "jev" | "tie" | null;
@@ -30,6 +34,8 @@ export type RaceSnapshot = {
   youDistance: number;
   jevDistance: number;
   lastJev: DecideResponse | null;
+  lastJevAsk: JevAskView | null;
+  jevIoStatus: JevIoStatus;
   /** Seconds left in the watch-Jev window (spectating only). */
   spectateLeftMs: number;
 };
@@ -59,6 +65,8 @@ export class RaceGame {
   jevDistance = 0;
   winner: Winner = null;
   lastJev: DecideResponse | null = null;
+  lastJevAsk: JevAskView | null = null;
+  jevIoStatus: JevIoStatus = "idle";
   private spectateElapsedMs = 0;
   /** Frozen bitmap of the YOU lane after crash (spectate / ended). */
   private youFreeze: HTMLCanvasElement | null = null;
@@ -83,8 +91,10 @@ export class RaceGame {
     this.jev = new Dino("JEV");
     this.jevController = new JevController({
       getSnapshot: () => this.buildJevSnapshot(),
-      onDecision: (decision) => {
-        this.lastJev = decision;
+      onIo: ({ status, ask, decision }) => {
+        this.jevIoStatus = status;
+        this.lastJevAsk = ask;
+        if (decision) this.lastJev = decision;
         this.emit();
       },
     });
@@ -213,6 +223,8 @@ export class RaceGame {
     this.youDistance = 0;
     this.jevDistance = 0;
     this.lastJev = null;
+    this.lastJevAsk = null;
+    this.jevIoStatus = "idle";
     this.duckHeld = false;
     this.you.startRunning();
     this.jev.startRunning();
@@ -423,6 +435,8 @@ export class RaceGame {
       youDistance: this.youDistance,
       jevDistance: this.jevDistance,
       lastJev: this.lastJev,
+      lastJevAsk: this.lastJevAsk,
+      jevIoStatus: this.jevIoStatus,
       spectateLeftMs:
         this.phase === "spectating"
           ? Math.max(0, SPECTATE_MS - this.spectateElapsedMs)

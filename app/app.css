@@ -158,6 +158,158 @@ a:focus-visible {
   line-height: 1;
 }
 
+.jev-io {
+  width: 100%;
+  max-width: 600px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  color: var(--ink);
+}
+
+.jev-io-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.jev-io-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.jev-io-status {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.jev-io-status.status-thinking {
+  color: #0a7;
+}
+
+.jev-io-status.status-ready {
+  color: var(--ink);
+}
+
+.jev-io-status.status-skipped,
+.jev-io-status.status-late,
+.jev-io-status.status-error {
+  color: #a35;
+}
+
+.jev-io-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px 24px;
+}
+
+.jev-io-col h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.jev-io-facts {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.jev-io-facts > div {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.jev-io-facts dt {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.jev-io-facts dd {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.jev-io-facts .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.jev-io-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.jev-probs {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.jev-prob-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  margin-bottom: 3px;
+}
+
+.jev-prob-label strong {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.jev-probs li.is-chosen .jev-prob-label {
+  font-weight: 650;
+}
+
+.jev-probs li.is-chosen .jev-prob-label span::after {
+  content: " ←";
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.jev-prob-track {
+  height: 4px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.jev-prob-fill {
+  height: 100%;
+  background: var(--ink);
+  width: 0;
+  transition: width 160ms ease-out;
+}
+
+.jev-probs li.is-chosen .jev-prob-fill {
+  background: #0a7;
+}
+
+.jev-io-meta {
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
 .race-actions {
   display: grid;
   justify-items: center;
@@ -374,6 +526,20 @@ a:focus-visible {
     margin-top: 20px;
     margin-bottom: 4px;
     padding-bottom: 4px;
+  }
+
+  .jev-io {
+    max-width: none;
+    width: calc(100% - 24px);
+  }
+
+  .jev-io-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .jev-io-facts > div {
+    grid-template-columns: 6.5rem 1fr;
   }
 
   .touch-btn {

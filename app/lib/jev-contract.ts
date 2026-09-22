@@ -34,10 +34,14 @@ export type DecideState = {
   obstacle: ObstacleDecisionState;
 };
 
+/** Soft scores over the three maneuvers (from Jev choice probabilities). */
+export type ManeuverProbabilities = Record<Maneuver, number>;
+
 export type DecideResponse = {
   action: Maneuver;
   jump_profile: JumpProfile;
   confidence: number;
+  probabilities: ManeuverProbabilities;
   /** Derived key-hold view for HUD / logging. */
   press_jump: number;
   press_duck: number;
@@ -45,6 +49,53 @@ export type DecideResponse = {
   source: "jev" | "none";
   obstacle_id: string;
 };
+
+/** What the browser asked Jev — kept for on-screen I/O analysis. */
+export type JevAskView = {
+  speed: number;
+  dinosaur_motion: DinosaurMotion;
+  obstacle: ObstacleDecisionState & {
+    type?: ObstacleKind;
+    bird_altitude?: BirdAltitude;
+  };
+};
+
+export const EMPTY_PROBABILITIES: ManeuverProbabilities = {
+  jump: 0,
+  duck: 0,
+  keep_running: 0,
+};
+
+export function labelManeuver(action: Maneuver): string {
+  if (action === "keep_running") return "Keep running";
+  if (action === "jump") return "Jump";
+  return "Duck";
+}
+
+export function labelFlightPath(path: FlightPath): string {
+  if (path === "ground_hazard") return "Ground hazard";
+  if (path === "blocks_running_and_ducking") return "Blocks run + duck";
+  if (path === "blocks_running_only") return "Blocks running only";
+  return "Clears running dino";
+}
+
+export function labelKind(kind: SemanticKind): string {
+  if (kind === "small_cactus") return "Small cactus";
+  if (kind === "large_cactus") return "Large cactus";
+  return "Pterodactyl";
+}
+
+export function labelGroup(group: ObstacleGroup): string {
+  if (group === "triple") return "×3";
+  if (group === "double") return "×2";
+  return "×1";
+}
+
+export function labelMotion(motion: DinosaurMotion): string {
+  if (motion === "jumping") return "Jumping";
+  if (motion === "ducking") return "Ducking";
+  return "Running";
+}
 
 export const CONFIDENCE_THRESHOLD = 0.5;
 export const VISIBLE_COUNT = 5;

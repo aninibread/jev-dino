@@ -1,16 +1,16 @@
 import {
   BASE_SPEED,
-  TREX,
 } from "./constants";
 import {
   CONFIDENCE_THRESHOLD,
+  EMPTY_PROBABILITIES,
   birdAltitude,
   flightPathFor,
-  maneuverToPresses,
   toGroup,
   toSemanticKind,
   type DecideResponse,
   type DinosaurMotion,
+  type JevAskView,
   type JumpProfile,
   type Maneuver,
 } from "../lib/jev-contract";
@@ -27,9 +27,23 @@ export type JevSnapshot = {
   obstacles: Obstacle[];
 };
 
+export type JevIoStatus =
+  | "idle"
+  | "thinking"
+  | "ready"
+  | "skipped"
+  | "late"
+  | "error";
+
+export type JevIoView = {
+  status: JevIoStatus;
+  ask: JevAskView | null;
+  decision: DecideResponse | null;
+};
+
 export type JevControllerOptions = {
   getSnapshot: () => JevSnapshot | null;
-  onDecision: (decision: DecideResponse) => void;
+  onIo: (view: JevIoView) => void;
 };
 
 type PlanStatus =
@@ -44,6 +58,7 @@ type PlanStatus =
 type Plan = {
   obstacleId: string;
   obstacle: Obstacle;
+  ask: JevAskView;
   status: PlanStatus;
   abort: AbortController;
   requestedAt: number;
@@ -60,6 +75,8 @@ export class JevController {
   private plans = new Map<string, Plan>();
   private lastAction: "run" | "jump" | "duck" = "run";
   private lastDecision: DecideResponse | null = null;
+  private lastAsk: JevAskView | null = null;
+  private lastStatus: JevIoStatus = "idle";
   private pressJump = 0;
   private pressDuck = 0;
   private jumpProfile: JumpProfile = "full";
@@ -78,12 +95,29 @@ export class JevController {
     return this.lastDecision;
   }
 
+  get ask() {
+    return this.lastAsk;
+  }
+
+  get ioStatus() {
+    return this.lastStatus;
+  }
+
   get keys() {
     return {
       jump: this.pressJump,
       duck: this.pressDuck,
       jumpProfile: this.jumpProfile,
     };
+  }
+
+  private emitIo(
+    status: JevIoStatus,
+    ask = this.lastAsk,
+    decision = this.lastDecision,
+  ) {
+    this.lastStatus = status;
+    this.options.onIo({ status, ask, decision });
   }
 
   start() {
@@ -93,6 +127,8 @@ export class JevController {
     this.plans.clear();
     this.lastAction = "run";
     this.lastDecision = null;
+    this.lastAsk = null;
+    this.lastStatus = "idle";
     this.pressJump = 0;
     this.pressDuck = 0;
     this.jumpProfile = "full";
@@ -101,6 +137,7 @@ export class JevController {
       "color:#0a7;font-weight:700",
       "color:inherit",
     );
+    this.emitIo("idle", null, null);
     const tick = () => {
       if (!this.running) return;
       this.onFrame();
@@ -141,31 +178,47 @@ export class JevController {
 
   private async requestDecision(obstacle: Obstacle, snapshot: JevSnapshot) {
     const abort = new AbortController();
-    const plan: Plan = {
-      obstacleId: obstacle.id,
-      obstacle,
-      status: "pending",
-      abort,
-      requestedAt: performance.now(),
-    };
-    this.plans.set(obstacle.id, plan);
-
     const type = obstacle.typeConfig.kind;
     const alt = type === "bird" ? birdAltitude(obstacle.yPos) : undefined;
-    const body = {
+    const ask: JevAskView = {
       speed: snapshot.speed,
       dinosaur_motion: snapshot.dinosaurMotion,
       obstacle: {
         id: obstacle.id,
         type,
-        size: obstacle.size,
-        width: obstacle.width,
-        y: obstacle.yPos,
         bird_altitude: alt,
         kind: toSemanticKind(type),
         group: toGroup(obstacle.size),
         flight_path: flightPathFor(type, alt),
         width_px: Math.round(obstacle.width),
+      },
+    };
+    const plan: Plan = {
+      obstacleId: obstacle.id,
+      obstacle,
+      ask,
+      status: "pending",
+      abort,
+      requestedAt: performance.now(),
+    };
+    this.plans.set(obstacle.id, plan);
+    this.lastAsk = ask;
+    this.emitIo("thinking", ask, null);
+
+    const body = {
+      speed: ask.speed,
+      dinosaur_motion: ask.dinosaur_motion,
+      obstacle: {
+        id: ask.obstacle.id,
+        type,
+        size: obstacle.size,
+        width: obstacle.width,
+        y: obstacle.yPos,
+        bird_altitude: alt,
+        kind: ask.obstacle.kind,
+        group: ask.obstacle.group,
+        flight_path: ask.obstacle.flight_path,
+        width_px: ask.obstacle.width_px,
       },
     };
 
@@ -186,8 +239,8 @@ export class JevController {
       }
 
       const shortOk =
-        body.obstacle.kind === "small_cactus" &&
-        body.obstacle.group === "single";
+        ask.obstacle.kind === "small_cactus" &&
+        ask.obstacle.group === "single";
       const effectiveJumpProfile: JumpProfile =
         decision.action === "jump" &&
         decision.jump_profile === "short" &&
@@ -196,17 +249,26 @@ export class JevController {
           ? "short"
           : "full";
 
-      const enriched = {
+      const enriched: DecideResponse & { effectiveJumpProfile: JumpProfile } = {
         ...decision,
+        probabilities: decision.probabilities ?? {
+          ...EMPTY_PROBABILITIES,
+          [decision.action]: decision.confidence,
+        },
         effectiveJumpProfile,
         durationMs: decision.durationMs ?? performance.now() - plan.requestedAt,
       };
       plan.decision = enriched;
+      this.lastAsk = ask;
       this.lastDecision = enriched;
       logJevReply(enriched, body);
 
-      if (decision.source === "none" || decision.confidence < CONFIDENCE_THRESHOLD) {
+      if (
+        decision.source === "none" ||
+        decision.confidence < CONFIDENCE_THRESHOLD
+      ) {
         plan.status = "skipped";
+        this.emitIo("skipped", ask, enriched);
         console.log(
           "%c[Jev]%c skipped (low confidence or error) %s",
           "color:#666;font-weight:600",
@@ -217,11 +279,12 @@ export class JevController {
       }
 
       plan.status = "ready";
-      this.options.onDecision(enriched);
+      this.emitIo("ready", ask, enriched);
     } catch (error) {
       if ((error as Error)?.name === "AbortError") return;
       if (this.plans.get(obstacle.id) !== plan) return;
       plan.status = "error";
+      this.emitIo("error", ask, this.lastDecision);
       console.log(
         "%c[Jev reply]%c (request failed) %s",
         "color:#666;font-weight:600",
@@ -235,7 +298,6 @@ export class JevController {
     // Default: release keys unless a plan is actively ducking / about to jump.
     let wantJump = false;
     let wantDuck = false;
-    let acted: Maneuver | "run" = "run";
 
     for (const [id, plan] of this.plans) {
       const obstacle = plan.obstacle;
@@ -244,9 +306,6 @@ export class JevController {
         obstacle.xPos + obstacle.width < snapshot.dinosaurX - 4;
 
       if (passed) {
-        if (plan.status === "ducking") {
-          wantDuck = false;
-        }
         this.plans.delete(id);
         continue;
       }
@@ -266,7 +325,6 @@ export class JevController {
         // Still too far — wait. Keep duck held if already ducking this one.
         if (plan.status === "ducking") {
           wantDuck = true;
-          acted = "duck";
         }
         continue;
       }
@@ -275,6 +333,7 @@ export class JevController {
         // Decision too late — abort and skip (no thrash fallback).
         plan.status = "late";
         plan.abort.abort();
+        this.emitIo("late", plan.ask, plan.decision ?? null);
         console.log(
           "%c[Jev]%c late — skipped %s",
           "color:#c60;font-weight:600",
@@ -286,7 +345,6 @@ export class JevController {
 
       if (plan.status === "ducking") {
         wantDuck = true;
-        acted = "duck";
         continue;
       }
 
@@ -304,18 +362,15 @@ export class JevController {
         }
         wantJump = true;
         this.jumpProfile = jumpProfile;
-        acted = "jump";
         plan.status = "executed";
         logJevAct(this.lastAction, "jump", plan.decision!, null);
       } else if (action === "duck") {
         if (snapshot.dinosaurMotion === "jumping") {
           // Speed-drop then duck on land.
           wantDuck = true;
-          acted = "duck";
           continue;
         }
         wantDuck = true;
-        acted = "duck";
         plan.status = "ducking";
         logJevAct(this.lastAction, "duck", plan.decision!, null);
       } else {
@@ -330,16 +385,6 @@ export class JevController {
     const ui = wantDuck ? "duck" : wantJump ? "jump" : "run";
     if (ui !== this.lastAction) {
       this.lastAction = ui;
-      if (this.lastDecision) {
-        const presses = maneuverToPresses(
-          acted === "run" ? "keep_running" : acted,
-        );
-        this.options.onDecision({
-          ...this.lastDecision,
-          press_jump: presses.press_jump,
-          press_duck: presses.press_duck,
-        });
-      }
     }
   }
 }

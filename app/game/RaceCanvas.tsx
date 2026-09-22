@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { JevIoPanel } from "./JevIoPanel";
 import { RaceGame, type RaceSnapshot, type Winner } from "./race";
 
 export function RaceCanvas({
@@ -59,6 +60,8 @@ export function RaceCanvas({
 
   const phase = snapshot?.phase ?? "idle";
   const spectateLeft = Math.ceil((snapshot?.spectateLeftMs ?? 0) / 1000);
+  const raceLive =
+    phase === "playing" || phase === "spectating" || phase === "ended";
 
   function onJumpPointer(event: React.PointerEvent) {
     event.preventDefault();
@@ -94,6 +97,13 @@ export function RaceCanvas({
         <p className="race-status muted">Loading track…</p>
       )}
       {error && <p className="error-card">{error}</p>}
+
+      <JevIoPanel
+        ask={snapshot?.lastJevAsk ?? null}
+        decision={snapshot?.lastJev ?? null}
+        status={snapshot?.jevIoStatus ?? "idle"}
+        active={raceLive}
+      />
 
       <div className="touch-controls" aria-label="Touch controls">
         {phase === "ended" ? (

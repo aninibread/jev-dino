@@ -40,7 +40,7 @@ export function logJevReply(
       ? ` ${decision.effectiveJumpProfile ?? decision.jump_profile}`
       : "";
   console.log(
-    `%c[Jev reply]%c ${decision.action}${profile} conf=${pct(decision.confidence)} ${Math.round(decision.durationMs)}ms vs ${body.obstacle.id}`,
+    `%c[Jev reply]%c ${decision.action}${profile} conf=${pct(decision.confidence)} jump=${pct(decision.probabilities?.jump ?? 0)} duck=${pct(decision.probabilities?.duck ?? 0)} run=${pct(decision.probabilities?.keep_running ?? 0)} ${Math.round(decision.durationMs)}ms vs ${body.obstacle.id}`,
     `color:${color};font-weight:600`,
     "color:inherit",
   );

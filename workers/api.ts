@@ -143,6 +143,11 @@ export async function handleApi(
             action: "keep_running" as const,
             jump_profile: "full" as const,
             confidence: 0,
+            probabilities: {
+              jump: 0,
+              duck: 0,
+              keep_running: 0,
+            },
             press_jump: 0,
             press_duck: 0,
             durationMs: 0,

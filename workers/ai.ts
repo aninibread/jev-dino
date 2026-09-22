@@ -2,11 +2,13 @@ import {
   buildManeuverQuestions,
   buildManeuverState,
   CONFIDENCE_THRESHOLD,
+  EMPTY_PROBABILITIES,
   maneuverToPresses,
   type DecideResponse,
   type DecideState,
   type JumpProfile,
   type Maneuver,
+  type ManeuverProbabilities,
 } from "../app/lib/jev-contract";
 
 export class ApiError extends Error {
@@ -52,11 +54,47 @@ function findAnswerBlock(
   return null;
 }
 
+function parseProbabilities(
+  block: Record<string, unknown> | null,
+  allowed: string[],
+  chosen: string,
+  confidence: number,
+): ManeuverProbabilities {
+  const probs = { ...EMPTY_PROBABILITIES };
+  const raw = block && object(block.probabilities) ? block.probabilities : null;
+  let sum = 0;
+  if (raw) {
+    for (const key of allowed) {
+      const value = raw[key];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        const clamped = Math.min(1, Math.max(0, value));
+        probs[key as Maneuver] = clamped;
+        sum += clamped;
+      }
+    }
+  }
+  // Fallback: put confidence on the chosen maneuver when Jev omits probs.
+  if (sum < 0.01) {
+    for (const key of allowed) probs[key as Maneuver] = 0;
+    probs[chosen as Maneuver] = confidence;
+    return probs;
+  }
+  // Normalize so the three bars read as a distribution.
+  for (const key of allowed) {
+    probs[key as Maneuver] = probs[key as Maneuver] / sum;
+  }
+  return probs;
+}
+
 function parseChoice(
   value: unknown,
   key: string,
   allowed: string[],
-): { choice: string; confidence: number } | null {
+): {
+  choice: string;
+  confidence: number;
+  block: Record<string, unknown>;
+} | null {
   const block = findAnswerBlock(value, key);
   if (!block) return null;
   const choice =
@@ -72,7 +110,7 @@ function parseChoice(
       : typeof block.noul === "number"
         ? Math.min(1, Math.max(0, block.noul))
         : 0.5;
-  return { choice, confidence };
+  return { choice, confidence, block };
 }
 
 export function parseDecideResponse(
@@ -87,6 +125,7 @@ export function parseDecideResponse(
     parseChoice(value, "jump_profile", PROFILES) ?? {
       choice: "full" as const,
       confidence: 0.5,
+      block: {},
     };
 
   const action = maneuver.choice as Maneuver;
@@ -99,11 +138,18 @@ export function parseDecideResponse(
     jump_profile = "full";
   }
 
+  const probabilities = parseProbabilities(
+    maneuver.block,
+    MANEUVERS,
+    action,
+    maneuver.confidence,
+  );
   const presses = maneuverToPresses(action);
   return {
     action,
     jump_profile,
     confidence: maneuver.confidence,
+    probabilities,
     press_jump: presses.press_jump,
     press_duck: presses.press_duck,
     obstacle_id: state.obstacle.id,
