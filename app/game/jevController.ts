@@ -1,5 +1,4 @@
 import {
-  LOOKAHEAD_COUNT,
   LOOKAHEAD_S,
   pickAction,
   type DecideResponse,
@@ -26,7 +25,6 @@ export class JevController {
   private lastDecision: DecideResponse | null = null;
   private jumpBelief = 0;
   private duckBelief = 0;
-  private lastAskKey = "";
   private options: Required<Pick<JevControllerOptions, "intervalMs">> &
     JevControllerOptions;
   running = false;
@@ -49,7 +47,6 @@ export class JevController {
     this.lastAction = "run";
     this.jumpBelief = 0;
     this.duckBelief = 0;
-    this.lastAskKey = "";
     this.lastDecision = null;
     console.log(
       "%c[Jev]%c raw-window mode — Jev owns jump/duck (no local tactics)",
@@ -121,21 +118,18 @@ export class JevController {
 
   private async askJev() {
     if (!this.running) return;
+    // Never abort an in-flight ask — dx changes every tick and was canceling
+    // every request before Jev (~600ms) could answer.
+    if (this.inflight) return;
+
     const state = this.options.getState();
     if (!state) return;
 
     const next = state.upcoming[0];
-    // Only bother the model when something is in the visible approach window.
     if (!next || next.time_to_impact > LOOKAHEAD_S) return;
 
-    const askKey = `${next.type}:${Math.round(next.dx / 30)}:${Math.round(next.y / 10)}`;
-    if (this.inflight && askKey === this.lastAskKey) return;
-
-    this.lastAskKey = askKey;
-    this.inflight?.abort();
     const controller = new AbortController();
     this.inflight = controller;
-
     logJevAsk(state);
 
     try {
@@ -148,7 +142,7 @@ export class JevController {
           AbortSignal.timeout(2800),
         ]),
       });
-      if (!response.ok) throw new Error("decide failed");
+      if (!response.ok) throw new Error(`decide failed (${response.status})`);
       const body = (await response.json()) as DecideResponse;
       if (!this.running) return;
 
@@ -177,7 +171,6 @@ export class JevController {
       this.applyBeliefs();
     } catch (error) {
       if ((error as Error)?.name === "AbortError") return;
-      // No heuristic fallback — Jev owns decisions; on failure we keep last beliefs.
       console.log(
         "%c[Jev reply]%c (request failed — holding last beliefs) %s",
         "color:#666;font-weight:600",
@@ -189,4 +182,3 @@ export class JevController {
     }
   }
 }
-
