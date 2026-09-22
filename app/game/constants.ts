@@ -39,10 +39,17 @@ export const JEV_MAX_OFFSCREEN = 5;
  * prefetch the off-screen queue without stampeding.
  */
 export const JEV_MAX_IN_FLIGHT = 8;
-/** Browser fetch budget for /api/jev-decide (must exceed server AI timeout). */
-export const JEV_CLIENT_TIMEOUT_MS = 8_000;
-/** Workers AI abort budget inside the decide handler. */
-export const JEV_SERVER_TIMEOUT_MS = 7_000;
+/**
+ * Per-attempt browser fetch budget. On timeout/failure we retry immediately
+ * up to JEV_MAX_ATTEMPTS instead of waiting out a long single request.
+ */
+export const JEV_ATTEMPT_TIMEOUT_MS = 2_800;
+/** Total tries per ask (1 initial + retries). */
+export const JEV_MAX_ATTEMPTS = 3;
+/** @deprecated Prefer JEV_ATTEMPT_TIMEOUT_MS; kept for any external refs. */
+export const JEV_CLIENT_TIMEOUT_MS = JEV_ATTEMPT_TIMEOUT_MS * JEV_MAX_ATTEMPTS;
+/** Workers AI abort budget inside the decide handler (under one attempt). */
+export const JEV_SERVER_TIMEOUT_MS = 2_500;
 /**
  * Prefer waiting briefly for next_obstacle before the profile call, but never
  * delay the maneuver ask. Maneuvers fire as soon as the obstacle is seen.

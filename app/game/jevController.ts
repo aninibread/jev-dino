@@ -1,7 +1,8 @@
 import {
   BASE_SPEED,
   JEV_ASK_DEADLINE_SECONDS,
-  JEV_CLIENT_TIMEOUT_MS,
+  JEV_ATTEMPT_TIMEOUT_MS,
+  JEV_MAX_ATTEMPTS,
   JEV_MAX_IN_FLIGHT,
 } from "./constants";
 import {
@@ -444,7 +445,7 @@ export class JevController {
         body: JSON.stringify(body),
         signal: AbortSignal.any([
           plan.abort.signal,
-          AbortSignal.timeout(JEV_CLIENT_TIMEOUT_MS),
+          AbortSignal.timeout(JEV_ATTEMPT_TIMEOUT_MS),
         ]),
       });
       if (!response.ok) throw new Error(`decide failed (${response.status})`);
@@ -452,6 +453,19 @@ export class JevController {
       if (!this.running) return;
       if (this.plans.get(plan.obstacleId) !== plan || plan.status !== "pending") {
         return;
+      }
+
+      // Soft server failure — retry while attempts remain instead of skipping.
+      if (
+        (decision.source === "none" ||
+          decision.confidence < CONFIDENCE_THRESHOLD) &&
+        attempt + 1 < JEV_MAX_ATTEMPTS
+      ) {
+        throw new Error(
+          decision.source === "none"
+            ? "empty Jev response"
+            : "low confidence",
+        );
       }
 
       const enriched: DecideResponse & { effectiveJumpProfile: JumpProfile } = {
@@ -495,11 +509,12 @@ export class JevController {
       if (!this.running) return;
       if (this.plans.get(plan.obstacleId) !== plan) return;
       if (plan.status !== "pending") return;
+      // Plan cancelled (late / race end) — do not retry.
       if (plan.abort.signal.aborted) return;
 
-      if (attempt < 1) {
+      if (attempt + 1 < JEV_MAX_ATTEMPTS) {
         console.log(
-          "%c[Jev]%c retrying maneuver %s (%s)",
+          `%c[Jev]%c retry maneuver ${attempt + 2}/${JEV_MAX_ATTEMPTS} %s (%s)`,
           "color:#c60;font-weight:600",
           "color:inherit",
           plan.obstacleId,
@@ -514,7 +529,7 @@ export class JevController {
         error instanceof Error ? error.message : "request failed";
       this.emitIo("error", ask, this.lastDecision, message);
       console.log(
-        "%c[Jev reply]%c (request failed) %s",
+        "%c[Jev reply]%c (request failed after retries) %s",
         "color:#666;font-weight:600",
         "color:inherit",
         message,
@@ -648,7 +663,7 @@ export class JevController {
         body: JSON.stringify(body),
         signal: AbortSignal.any([
           plan.abort.signal,
-          AbortSignal.timeout(JEV_CLIENT_TIMEOUT_MS),
+          AbortSignal.timeout(JEV_ATTEMPT_TIMEOUT_MS),
         ]),
       });
       if (!response.ok) {
@@ -658,9 +673,17 @@ export class JevController {
         jump_profile?: JumpProfile;
         profile_probabilities?: JumpProfileProbabilities;
         durationMs?: number;
+        source?: string;
       };
       if (!this.running) return;
       if (this.plans.get(plan.obstacleId) !== plan) return;
+
+      if (
+        result.source === "none" &&
+        attempt + 1 < JEV_MAX_ATTEMPTS
+      ) {
+        throw new Error("empty profile response");
+      }
 
       plan.profileResult = {
         jump_profile: result.jump_profile === "short" ? "short" : "full",
@@ -701,9 +724,9 @@ export class JevController {
       }
     } catch (error) {
       if (plan.abort.signal.aborted) return;
-      if (attempt < 1) {
+      if (attempt + 1 < JEV_MAX_ATTEMPTS) {
         console.log(
-          "%c[Jev]%c retrying jump profile %s (%s)",
+          `%c[Jev]%c retry profile ${attempt + 2}/${JEV_MAX_ATTEMPTS} %s (%s)`,
           "color:#c60;font-weight:600",
           "color:inherit",
           plan.obstacleId,
@@ -713,7 +736,7 @@ export class JevController {
         return;
       }
       console.log(
-        "%c[Jev]%c jump profile missed, keeping full (%s)",
+        "%c[Jev]%c jump profile missed after retries, keeping full (%s)",
         "color:#666;font-weight:600",
         "color:inherit",
         error instanceof Error ? error.message : "request failed",
