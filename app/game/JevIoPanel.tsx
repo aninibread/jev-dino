@@ -2,7 +2,6 @@ import { useEffect, useId, useRef, useState } from "react";
 import {
   EMPTY_PROBABILITIES,
   EMPTY_PROFILE_PROBABILITIES,
-  TIGHT_NEXT_SECONDS,
   labelFlightPath,
   labelGroup,
   labelKind,
@@ -228,9 +227,7 @@ export function JevIoPanel({
     ? `${labelKind(next.kind)} ${labelGroup(next.group)}`
     : "–";
   const gapLabel = next
-    ? `${next.gap_px}px / ${next.seconds_until_next.toFixed(2)}s${
-        next.seconds_until_next <= TIGHT_NEXT_SECONDS ? " tight" : ""
-      }`
+    ? `${next.gap_px}px / ${next.seconds_until_next.toFixed(2)}s`
     : "–";
 
   return (

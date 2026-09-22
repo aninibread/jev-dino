@@ -377,7 +377,7 @@ export class JevController {
 
   /**
    * Fire profile as soon as next_obstacle is known (or the ask deadline hits),
-   * so Jev sees tight chains instead of always defaulting to full.
+   * so the profile ask can include gap + next flight path.
    */
   private flushProfileAsks(snapshot: JevSnapshot) {
     for (const id of [...this.awaitingProfile]) {

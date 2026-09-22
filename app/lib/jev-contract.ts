@@ -3,7 +3,7 @@
  *
  * Jev chooses WHAT: jump | duck | keep_running (+ jump profile).
  * Code chooses WHEN (proximity) and HOW LONG (hold duck until clear).
- * Optional next_obstacle is context for jump_profile only (tight chains).
+ * Optional next_obstacle is context for jump_profile only (gap + path).
  */
 
 export type JevAction = "run" | "jump" | "duck";
@@ -91,9 +91,6 @@ export const EMPTY_PROFILE_PROBABILITIES: JumpProfileProbabilities = {
   short: 0,
   full: 0,
 };
-
-/** Gaps at or below this (seconds) count as a tight follow-up for short recovery. */
-export const TIGHT_NEXT_SECONDS = 0.85;
 
 export function likelyManeuverFor(
   flightPath: FlightPath,
