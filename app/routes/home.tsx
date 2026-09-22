@@ -51,20 +51,18 @@ function Rules() {
   return (
     <div className="rules-content">
       <p>
-        <b>You</b> control the top dinosaur. On desktop: Space / ↑ jump, ↓ duck.
-        On phones: tap the track or Jump; hold Duck for birds.
+        <b>You</b> control the top dinosaur. Desktop: Space / ↑ jump, ↓ duck.
+        Phone: tap Jump; hold Duck for birds.
       </p>
       <p>
-        <b>Jev</b> runs the bottom lane on the same obstacles. For each
-        obstacle it picks jump, duck, or keep running once; the game times
-        the move.
+        <b>Jev</b> runs the bottom lane on the same course. It sees the Input
+        panel on screen. For each obstacle it picks a <b>maneuver</b> (jump,
+        duck, or keep running) and, when jumping or ducking, a <b>profile</b>{" "}
+        (short or full recovery). The browser times when to press and release.
       </p>
       <p>
-        The track gets much faster over <b>60 seconds</b>. First crash loses.
-        Survive the minute and distance decides.
-      </p>
-      <p className="muted">
-        Late race is intentionally brutal. Losing is part of the sport.
+        Race lasts <b>60 seconds</b>. First crash loses. Survive the minute and
+        distance decides.
       </p>
     </div>
   );
