@@ -9,7 +9,6 @@ import {
   CONFIDENCE_THRESHOLD,
   EMPTY_PROBABILITIES,
   EMPTY_PROFILE_PROBABILITIES,
-  TIGHT_NEXT_SECONDS,
   ULTRA_TIGHT_SECONDS,
   birdAltitude,
   flightPathFor,
@@ -145,8 +144,6 @@ export class JevController {
   private pressJump = 0;
   private pressDuck = 0;
   private jumpProfile: JumpProfile = "full";
-  /** After a short jump, hold duck mid-air until we land. */
-  private shortHopActive = false;
   private options: JevControllerOptions;
   private decideQueue: Array<() => Promise<void>> = [];
   private inFlight = 0;
@@ -296,7 +293,6 @@ export class JevController {
     this.pressJump = 0;
     this.pressDuck = 0;
     this.jumpProfile = "full";
-    this.shortHopActive = false;
     console.log(
       `%c[Jev]%c FIFO plan queue; max ${JEV_MAX_IN_FLIGHT} fetches in flight`,
       "color:#0a7;font-weight:700",
@@ -324,7 +320,6 @@ export class JevController {
     this.awaitingProfile.clear();
     this.pressJump = 0;
     this.pressDuck = 0;
-    this.shortHopActive = false;
   }
 
   /** Queue a Worker fetch; pump keeps up to JEV_MAX_IN_FLIGHT running. */
@@ -673,38 +668,26 @@ export class JevController {
     });
   }
 
-  /** Map raw profile + maneuver into an allowed short/full recovery. */
   private effectiveProfileFor(
     action: DecideResponse["action"],
     ask: JevAskView,
     raw: JumpProfile,
-    probs: JumpProfileProbabilities,
   ): JumpProfile {
+    if (raw !== "short") return "full";
     if (!shortRecoveryAllowed(action, ask.obstacle)) return "full";
 
     const next = ask.next_obstacle;
-    if (!next) return raw === "short" ? "short" : "full";
-
     // Extremely tight stacks at speed: one full hop often clears both;
     // a short hop lands in the gap and fails.
     if (
       action === "jump" &&
+      next &&
       next.seconds_until_next <= ULTRA_TIGHT_SECONDS
     ) {
       return "full";
     }
 
-    const tight = next.seconds_until_next <= TIGHT_NEXT_SECONDS;
-
-    // Moderately tight chains: prefer short so we are neutral for the next move.
-    if (tight) {
-      if (raw === "short") return "short";
-      if ((probs.short ?? 0) >= 0.3) return "short";
-      if ((probs.full ?? 0) < 0.7) return "short";
-      return "full";
-    }
-
-    return raw === "short" ? "short" : "full";
+    return "short";
   }
 
   private mergeProfileIntoDecision(plan: Plan): void {
@@ -722,24 +705,12 @@ export class JevController {
 
     const raw = plan.profileResult;
     if (!raw) {
-      // Still waiting — for moderately tight eligible chains, act short already.
-      // Ultra-tight jumps stay full (clear both / avoid landing in the gap).
-      const next = plan.ask.next_obstacle;
-      const ultra =
-        !!next &&
-        action === "jump" &&
-        next.seconds_until_next <= ULTRA_TIGHT_SECONDS;
-      const tight =
-        !!next &&
-        !ultra &&
-        next.seconds_until_next <= TIGHT_NEXT_SECONDS;
-      const earlyShort =
-        tight && shortRecoveryAllowed(action, plan.ask.obstacle);
+      // Still waiting — default full so we never under-clear before Jev answers.
       plan.decision = {
         ...plan.decision,
-        jump_profile: earlyShort ? "short" : "full",
+        jump_profile: "full",
         profile_probabilities: { ...EMPTY_PROFILE_PROBABILITIES },
-        effectiveJumpProfile: earlyShort ? "short" : "full",
+        effectiveJumpProfile: "full",
       };
       return;
     }
@@ -748,7 +719,6 @@ export class JevController {
       action,
       plan.ask,
       raw.jump_profile,
-      raw.profile_probabilities,
     );
     plan.decision = {
       ...plan.decision,
@@ -761,7 +731,7 @@ export class JevController {
   }
 
   private async fetchJumpProfile(plan: Plan, attempt = 0): Promise<void> {
-    // Refresh next + pass chosen_maneuver so Jev can prefer short on chains.
+    // Refresh next + pass chosen_maneuver so Jev can size recovery for chains.
     const snapshot = this.options.getSnapshot();
     const nextDescribed = snapshot
       ? this.buildNextDescribed(plan.obstacle, snapshot)
@@ -893,15 +863,6 @@ export class JevController {
     let wantJump = false;
     let wantDuck = false;
 
-    // Short hop = jump then duck mid-air until landing.
-    if (this.shortHopActive) {
-      if (snapshot.dinosaurMotion === "jumping") {
-        wantDuck = true;
-      } else {
-        this.shortHopActive = false;
-      }
-    }
-
     // Act in spawn order so a later reply cannot jump the queue.
     for (const id of [...this.planOrder]) {
       const plan = this.plans.get(id);
@@ -989,7 +950,6 @@ export class JevController {
         }
         wantJump = true;
         this.jumpProfile = jumpProfile;
-        this.shortHopActive = jumpProfile === "short";
         plan.status = "executed";
         logJevAct(this.lastAction, "jump", plan.decision!, null);
       } else if (action === "duck") {

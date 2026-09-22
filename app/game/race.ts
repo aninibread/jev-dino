@@ -319,11 +319,9 @@ export class RaceGame {
       const duckHeld = duckKey >= 0.45;
 
       if (this.jev.jumping) {
-        // Short hop is jump-then-duck; keep holding duck once min height is hit
-        // (or whenever the controller asks for duck mid-air).
-        const shortSlam =
-          this.jev.jumpProfile === "short" && this.jev.reachedMinHeight;
-        if (duckHeld || shortSlam) this.jev.setDuck(true);
+        // Mid-air duck = intentional speed-drop only (e.g. late duck under a bird).
+        // Short jump uses endJump in Dino — never force duck here.
+        if (duckHeld) this.jev.setDuck(true);
       } else if (duckHeld) {
         this.jev.setDuck(true);
       } else {

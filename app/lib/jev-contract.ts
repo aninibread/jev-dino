@@ -247,8 +247,8 @@ export function buildManeuverState(state: DecideState) {
       "The current motion is transient. Browser code will finish it and",
       "execute the chosen maneuver at the safe proximity for the current speed.",
       "Use predicted_speed_at_action for timing judgment: higher speed closes",
-      "gaps faster, so ultra-tight stacks often need a full jump to clear both,",
-      "while moderate gaps favor a short hop or brief duck to recover for next.",
+      "gaps faster. Prefer full recovery unless a moderate next gap clearly",
+      "needs an earlier landing or shorter duck so a second move is possible.",
     ].join(" "),
   };
 }
@@ -293,8 +293,8 @@ export function buildManeuverQuestions() {
 
 /**
  * Recovery profile (fired alongside maneuvers once next context is available).
- * short = get back to a neutral run sooner for the next jump/duck;
- * full = commit to the safer longer hop or duck hold.
+ * short = earlier landing / briefer duck (still clears the target);
+ * full = safer longer hop or duck hold (default).
  */
 export function buildJumpProfileQuestions() {
   return {
@@ -302,30 +302,32 @@ export function buildJumpProfileQuestions() {
       type: "choice",
       instructions: [
         "Choose short or full recovery for the target obstacle.",
+        "Default to full. Only choose short when it is clearly needed.",
         "Use chosen_maneuver when present; otherwise use likely_maneuver",
         "(duck for mid birds, jump for ground hazards / low birds).",
         "Factor current_speed and predicted_speed_at_action: at high speed,",
         "the same gap_px closes faster.",
-        "When next_obstacle.is_ultra_tight_stack is true at high predicted",
-        "speed, prefer full jump so one arc clears both hazards.",
-        "When next_obstacle.is_tight_follow_up is true but not ultra-tight,",
-        "prefer short (jump-then-duck hop, or brief duck) so the dinosaur",
-        "returns to a neutral run for the next move.",
-        "When next_obstacle is null or not tight, prefer full.",
+        "When next_obstacle is null, far, or is_ultra_tight_stack is true,",
+        "choose full (ultra-tight stacks need one full jump to clear both).",
+        "Choose short only when next_obstacle.is_tight_follow_up is true,",
+        "the gap is not ultra-tight, and a second jump or duck must happen",
+        "soon after this move — for a single small cactus jump (earlier",
+        "landing, still clears the cactus) or a brief mid-bird duck.",
+        "Never choose short for large/grouped cacti or low-bird jumps.",
       ].join(" "),
       criteria: {
         short: {
           what: [
-            "Choose short when a moderate next gap needs a second jump or duck",
-            "soon: jump-then-duck short hop over a single small cactus, or a",
-            "brief duck under a mid bird, then stand for the follow-up.",
+            "Earlier recovery for a moderate next gap: release the jump early",
+            "over a single small cactus (still clears it, lands sooner), or",
+            "hold a brief duck under a mid bird, then stand for the follow-up.",
           ].join(" "),
         },
         full: {
           what: [
-            "Choose full for maximum clearance, null/far next, large or grouped",
-            "cacti, low bird jumps, or ultra-tight stacks at high speed where",
-            "landing between hazards would fail.",
+            "Default safer clearance: null/far next, large or grouped cacti,",
+            "low bird jumps, or ultra-tight stacks at high speed where landing",
+            "between hazards would fail. Prefer full when unsure.",
           ].join(" "),
         },
       },
