@@ -56,7 +56,7 @@ function Rules() {
       </p>
       <p>
         <b>Jev</b> races in the bottom lane. It gets inputs from the game and
-        decides what to do — jump, duck, or keep running — and if jumping,
+        decides what to do - jump, duck, or keep running - and if jumping,
         whether that jump should be short or full.
       </p>
     </div>
