@@ -37,8 +37,6 @@ export type NextObstacleContext = ObstacleDecisionState & {
 /** Minimal state sent to Jev for one obstacle. */
 export type DecideState = {
   speed: number;
-  /** Speed expected when the action executes (after lead runway). */
-  predicted_speed?: number;
   dinosaur_motion: DinosaurMotion;
   obstacle: ObstacleDecisionState;
   next_obstacle: NextObstacleContext | null;
@@ -96,12 +94,6 @@ export const EMPTY_PROFILE_PROBABILITIES: JumpProfileProbabilities = {
 
 /** Gaps at or below this (seconds) count as a tight follow-up for short recovery. */
 export const TIGHT_NEXT_SECONDS = 0.85;
-
-/**
- * Gaps this tight (or tighter) usually need a full hop — there is no room to
- * land and re-act before the next obstacle at race speed.
- */
-export const ULTRA_TIGHT_SECONDS = 0.3;
 
 export function likelyManeuverFor(
   flightPath: FlightPath,
@@ -210,14 +202,8 @@ export function maneuverToPresses(action: Maneuver): {
 export function buildManeuverState(state: DecideState) {
   const likely = likelyManeuverFor(state.obstacle.flight_path);
   const chosen = state.chosen_maneuver ?? null;
-  const predicted =
-    typeof state.predicted_speed === "number"
-      ? state.predicted_speed
-      : state.speed;
   return {
     objective: "Avoid the target obstacle and keep the dinosaur alive.",
-    current_speed: Number(state.speed.toFixed(2)),
-    predicted_speed_at_action: Number(predicted.toFixed(2)),
     dinosaur_motion_when_observed: state.dinosaur_motion,
     target_obstacle: {
       kind: state.obstacle.kind,
@@ -239,14 +225,10 @@ export function buildManeuverState(state: DecideState) {
           ),
           is_tight_follow_up:
             state.next_obstacle.seconds_until_next <= TIGHT_NEXT_SECONDS,
-          is_ultra_tight_stack:
-            state.next_obstacle.seconds_until_next <= ULTRA_TIGHT_SECONDS,
         }
       : null,
-    timing_policy: [
+    timing_policy:
       "Browser code times the maneuver and any short-jump duck-after-clear.",
-      "Higher predicted_speed_at_action closes gaps faster.",
-    ].join(" "),
   };
 }
 
@@ -289,26 +271,24 @@ export function buildManeuverQuestions() {
 }
 
 /**
- * Recovery profile. Prefer full; short only when a tight follow-up needs it.
- * Eligibility / duck-after-clear timing are enforced in browser code.
+ * Recovery profile. Prefer full; short only for a tight follow-up.
+ * Eligibility and duck-after-clear timing are enforced in browser code.
  */
 export function buildJumpProfileQuestions() {
   return {
     jump_profile: {
       type: "choice",
       instructions: [
-        "Choose short or full recovery for the target. Prefer full.",
+        "Choose short or full recovery. Prefer full.",
         "Use chosen_maneuver when present, else likely_maneuver.",
-        "Short only if next_obstacle.is_tight_follow_up and not",
-        "is_ultra_tight_stack — you need to recover for a second move soon.",
-        "Otherwise full (including null/far next).",
+        "Short only if next_obstacle.is_tight_follow_up; otherwise full.",
       ].join(" "),
       criteria: {
         short: {
-          what: "Recover sooner so a second jump or duck can happen soon.",
+          what: "Recover sooner for a second jump or duck.",
         },
         full: {
-          what: "Safer full clearance or duck hold. Prefer when unsure.",
+          what: "Safer full clearance or duck hold.",
         },
       },
     },

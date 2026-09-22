@@ -9,7 +9,6 @@ import {
   CONFIDENCE_THRESHOLD,
   EMPTY_PROBABILITIES,
   EMPTY_PROFILE_PROBABILITIES,
-  ULTRA_TIGHT_SECONDS,
   birdAltitude,
   flightPathFor,
   shortRecoveryAllowed,
@@ -27,7 +26,6 @@ import {
   type SemanticKind,
 } from "../lib/jev-contract";
 import { calculateActionProximityThreshold, obstacleClearedForShortDrop } from "../lib/timing";
-import { predictSpeed } from "./speedCurve";
 import type { Obstacle } from "./obstacles";
 import { logJevAct, logJevAsk, logJevReply } from "./jevLog";
 
@@ -111,7 +109,6 @@ type DescribedObstacle = {
 
 type DecideBody = {
   speed: number;
-  predicted_speed?: number;
   dinosaur_motion: DinosaurMotion;
   obstacle: DescribedObstacle;
   next_obstacle: (DescribedObstacle & {
@@ -480,17 +477,6 @@ export class JevController {
     const abort = new AbortController();
     const described = this.describeObstacle(obstacle);
     const nextDescribed = this.buildNextDescribed(obstacle, snapshot);
-    const threshold = calculateActionProximityThreshold({
-      baseSpeed: BASE_SPEED,
-      currentSpeed: snapshot.speed,
-      dinosaurX: snapshot.dinosaurX,
-      obstacleWidth: obstacle.width,
-      action: "jump",
-      jumpProfile: "full",
-    });
-    const pxPerSec = Math.max(snapshot.speed, 0.1) * 60;
-    const secondsToAct = Math.max(0, (obstacle.xPos - threshold) / pxPerSec);
-    const predicted_speed = predictSpeed(snapshot.speed, secondsToAct * 1000);
 
     const ask: JevAskView = {
       speed: snapshot.speed,
@@ -520,7 +506,6 @@ export class JevController {
     };
     const body: DecideBody = {
       speed: ask.speed,
-      predicted_speed,
       dinosaur_motion: ask.dinosaur_motion,
       obstacle: described,
       next_obstacle: nextDescribed,
@@ -684,18 +669,6 @@ export class JevController {
   ): JumpProfile {
     if (raw !== "short") return "full";
     if (!shortRecoveryAllowed(action, ask.obstacle)) return "full";
-
-    const next = ask.next_obstacle;
-    // Extremely tight stacks at speed: one full hop often clears both;
-    // a short hop lands in the gap and fails.
-    if (
-      action === "jump" &&
-      next &&
-      next.seconds_until_next <= ULTRA_TIGHT_SECONDS
-    ) {
-      return "full";
-    }
-
     return "short";
   }
 
@@ -746,23 +719,9 @@ export class JevController {
       ? this.buildNextDescribed(plan.obstacle, snapshot)
       : plan.body.next_obstacle;
     const liveSpeed = snapshot?.speed ?? plan.body.speed;
-    const threshold = calculateActionProximityThreshold({
-      baseSpeed: BASE_SPEED,
-      currentSpeed: liveSpeed,
-      dinosaurX: snapshot?.dinosaurX ?? 0,
-      obstacleWidth: plan.obstacle.width,
-      action: plan.decision?.action ?? "jump",
-      jumpProfile: plan.decision?.effectiveJumpProfile ?? "full",
-    });
-    const pxPerSec = Math.max(liveSpeed, 0.1) * 60;
-    const secondsToAct = Math.max(
-      0,
-      (plan.obstacle.xPos - threshold) / pxPerSec,
-    );
     const body: DecideBody = {
       ...plan.body,
       speed: liveSpeed,
-      predicted_speed: predictSpeed(liveSpeed, secondsToAct * 1000),
       next_obstacle: nextDescribed,
       chosen_maneuver: plan.decision?.action ?? null,
     };

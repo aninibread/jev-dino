@@ -178,11 +178,6 @@ function parseState(raw: Record<string, unknown>): DecideState {
 
   return {
     speed: raw.speed,
-    predicted_speed:
-      typeof raw.predicted_speed === "number" &&
-      Number.isFinite(raw.predicted_speed)
-        ? raw.predicted_speed
-        : raw.speed,
     dinosaur_motion: motion,
     obstacle: {
       id: parsed.id,
