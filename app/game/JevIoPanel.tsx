@@ -222,22 +222,6 @@ export function JevIoPanel({
   const chosen = stickyChosen.current;
   const profileProbs = stickyProfileProbs.current;
   const chosenProfile = stickyChosenProfile.current;
-  const nexts = ask?.next_obstacles ?? [];
-  const nextLabel =
-    nexts.length > 0
-      ? nexts
-          .map(
-            (n) =>
-              `${labelKind(n.kind)} ${labelGroup(n.group)} (${n.width_px}px)`,
-          )
-          .join(" → ")
-      : "–";
-  const gapLabel =
-    nexts.length > 0
-      ? nexts
-          .map((n) => `${n.gap_px}px / ${n.seconds_until_next.toFixed(2)}s`)
-          .join(" → ")
-      : "–";
 
   return (
     <section
@@ -272,14 +256,6 @@ export function JevIoPanel({
             <div>
               <dt>Motion at ask</dt>
               <dd>{ask ? labelMotion(ask.dinosaur_motion) : "–"}</dd>
-            </div>
-            <div>
-              <dt>Next</dt>
-              <dd>{nextLabel}</dd>
-            </div>
-            <div>
-              <dt>Gaps</dt>
-              <dd>{gapLabel}</dd>
             </div>
           </dl>
         </div>
