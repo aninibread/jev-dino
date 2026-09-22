@@ -321,39 +321,63 @@ a:focus-visible {
 @media (max-width: 640px), (pointer: coarse) {
   .site-header,
   .site-footer {
-    padding-left: max(18px, env(safe-area-inset-left));
-    padding-right: max(18px, env(safe-area-inset-right));
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+    padding-top: 12px;
+    padding-bottom: 10px;
   }
 
   .site-footer {
-    padding-top: 28px;
-    padding-bottom: max(18px, env(safe-area-inset-bottom));
+    padding-top: 16px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
 
+  .brand {
+    font-size: 17px;
+  }
+
+  /* Full-bleed page so the race window can use the phone width. */
   .page {
-    width: min(100% - 28px, 640px);
-    padding-top: 20px;
-    padding-bottom: 16px;
+    width: 100%;
+    max-width: none;
+    padding: 8px 0 12px;
   }
 
   .intro {
-    margin-bottom: 14px;
+    margin-bottom: 10px;
+    padding: 0 14px;
   }
 
   .intro h1 {
-    font-size: clamp(28px, 9vw, 34px);
+    font-size: clamp(26px, 8vw, 32px);
+  }
+
+  .race-stage {
+    gap: 10px;
+  }
+
+  .race-frame {
+    max-width: none;
+    width: 100%;
+  }
+
+  .race-canvas {
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
   }
 
   .touch-controls {
     display: grid;
-    /* Nudge toward thumb reach, still above the footer in normal flow. */
-    margin-top: 36px;
-    margin-bottom: 8px;
+    max-width: none;
+    width: calc(100% - 24px);
+    margin-top: 20px;
+    margin-bottom: 4px;
     padding-bottom: 4px;
   }
 
   .touch-btn {
-    min-height: 58px;
+    min-height: 54px;
   }
 
   /* Mobile uses Jump/Duck (idle/play) or ended/spectate panels — no separate CTA. */
@@ -363,23 +387,24 @@ a:focus-visible {
 
   .race-hud {
     top: 6px;
-    right: 8px;
+    right: 10px;
     gap: 8px;
-    font-size: 10px;
+    font-size: 11px;
   }
 }
 
 @media (max-width: 380px) {
-  .page {
-    width: min(100% - 20px, 640px);
+  .intro {
+    padding: 0 10px;
   }
 
   .touch-controls {
+    width: calc(100% - 16px);
     grid-template-columns: 1fr 1fr;
   }
 
   .touch-btn {
-    min-height: 52px;
+    min-height: 50px;
     font-size: 15px;
   }
 }
