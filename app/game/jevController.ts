@@ -1,11 +1,7 @@
 import {
-  inDuckWindow,
-  inJumpWindow,
-  jumpLeadSeconds,
-  nextActionable,
+  LOOKAHEAD_COUNT,
+  LOOKAHEAD_S,
   pickAction,
-  planAction,
-  shouldSpeedDrop,
   type DecideResponse,
   type DecideState,
   type JevAction,
@@ -19,8 +15,8 @@ export type JevControllerOptions = {
 };
 
 /**
- * Jev answers jump_now / duck_now (noul). Duck mid-air = speed-drop for chains.
- * Local planAction() commits the exact frame, including jump→duck→jump.
+ * Pure Jev control: raw window in → jump_now / duck_now out → action.
+ * No local planner, tactics, or physics override.
  */
 export class JevController {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -56,7 +52,7 @@ export class JevController {
     this.lastAskKey = "";
     this.lastDecision = null;
     console.log(
-      "%c[Jev]%c decision log on — watch [ask] / [reply] / [act]",
+      "%c[Jev]%c raw-window mode — Jev owns jump/duck (no local tactics)",
       "color:#0a7;font-weight:700",
       "color:inherit",
     );
@@ -64,7 +60,7 @@ export class JevController {
     void this.askJev();
     const tick = () => {
       if (!this.running) return;
-      this.executeTiming();
+      this.applyBeliefs();
       this.frameHook = requestAnimationFrame(tick);
     };
     this.frameHook = requestAnimationFrame(tick);
@@ -80,86 +76,22 @@ export class JevController {
     this.inflight = null;
   }
 
-  private executeTiming() {
+  /** Map current nouls → run / jump / duck. Nothing else votes. */
+  private applyBeliefs() {
     const state = this.options.getState();
     if (!state) return;
-    const next = nextActionable(state.upcoming);
-    if (!next) {
-      if (this.lastAction !== "run") {
-        this.emitAction("run", 0, 0, "heuristic", state);
-      }
+
+    const next = state.upcoming[0];
+    // No hazard in view — release held actions; don't act on stale beliefs.
+    if (!next || next.time_to_impact > LOOKAHEAD_S) {
+      this.jumpBelief = 0;
+      this.duckBelief = 0;
+      this.emitAction("run", 0, 0, "jev", state);
       return;
     }
 
-    const jumpLead = jumpLeadSeconds(next.width, state.speed);
-    const tti = next.time_to_impact;
-    const local = planAction(state);
-    const hasBelief = this.jumpBelief > 0.05 || this.duckBelief > 0.05;
-
-    let jump = this.jumpBelief;
-    let duck = this.duckBelief;
-    let source: DecideResponse["source"] = this.lastDecision?.source ?? "jev";
-
-    if (!hasBelief) {
-      jump = local.jump_now;
-      duck = local.duck_now;
-      source = "heuristic";
-    } else {
-      // Soft nouls still blend; local planner wins on chains / physics.
-      if (this.jumpBelief >= 0.28) jump = Math.max(jump, local.jump_now);
-      if (this.duckBelief >= 0.28) duck = Math.max(duck, local.duck_now);
-      if (local.chain_active) {
-        jump = Math.max(jump, local.jump_now);
-        duck = Math.max(duck, local.duck_now);
-      }
-      if (this.inflight && tti <= jumpLead + 0.05) {
-        jump = Math.max(jump, local.jump_now);
-        duck = Math.max(duck, local.duck_now);
-      }
-    }
-
-    let action: JevAction = "run";
-
-    // Mid-air speed-drop for chaining (duck while airborne).
-    if (!state.dino.grounded && (duck >= 0.45 || local.action === "duck")) {
-      if (shouldSpeedDrop(state) || local.action === "duck") {
-        action = "duck";
-      }
-    } else if (next.clearance === "duck") {
-      // Local physics owns bird ducks — re-asks must not stand us up mid-pass.
-      duck = Math.max(duck, local.duck_now);
-      if (
-        local.action === "duck" ||
-        (duck >= 0.45 && inDuckWindow(tti, next.width, state.speed))
-      ) {
-        action = "duck";
-      }
-    } else if (state.dino.grounded) {
-      if (jump >= 0.45 && inJumpWindow(tti, next.width, state.speed)) {
-        action = "jump";
-      } else if (
-        next.clearance === "either" &&
-        duck >= 0.45 &&
-        inDuckWindow(tti, next.width, state.speed)
-      ) {
-        action = "duck";
-      }
-    }
-
-    // Prefer local plan for chains, bird holds, or when beliefs are cold.
-    if (
-      local.action !== "run" &&
-      (local.chain_active ||
-        next.clearance === "duck" ||
-        !hasBelief)
-    ) {
-      action = local.action;
-      jump = Math.max(jump, local.jump_now);
-      duck = Math.max(duck, local.duck_now);
-      source = hasBelief ? source : "heuristic";
-    }
-
-    this.emitAction(action, jump, duck, source, state);
+    const action = pickAction(this.jumpBelief, this.duckBelief);
+    this.emitAction(action, this.jumpBelief, this.duckBelief, "jev", state);
   }
 
   private emitAction(
@@ -192,14 +124,11 @@ export class JevController {
     const state = this.options.getState();
     if (!state) return;
 
-    const next = nextActionable(state.upcoming);
-    // Ask earlier when a chain is coming — need belief before the first jump.
-    const askHorizon = state.tactics.chain_active ? 1.6 : 1.35;
-    if (!next || next.time_to_impact > askHorizon || next.time_to_impact < 0) {
-      return;
-    }
+    const next = state.upcoming[0];
+    // Only bother the model when something is in the visible approach window.
+    if (!next || next.time_to_impact > LOOKAHEAD_S) return;
 
-    const askKey = `${next.type}:${next.clearance}:${next.chain_with_next ? "c" : "n"}:${Math.round(next.dx / 25)}`;
+    const askKey = `${next.type}:${Math.round(next.dx / 30)}:${Math.round(next.y / 10)}`;
     if (this.inflight && askKey === this.lastAskKey) return;
 
     this.lastAskKey = askKey;
@@ -241,13 +170,16 @@ export class JevController {
         jump_now: this.jumpBelief,
         duck_now: this.duckBelief,
         action: pickAction(this.jumpBelief, this.duckBelief),
+        source: "jev",
       };
       logJevReply(this.lastDecision, state);
       this.options.onDecision(this.lastDecision);
+      this.applyBeliefs();
     } catch (error) {
       if ((error as Error)?.name === "AbortError") return;
+      // No heuristic fallback — Jev owns decisions; on failure we keep last beliefs.
       console.log(
-        "%c[Jev reply]%c (fallback — local planner) %s",
+        "%c[Jev reply]%c (request failed — holding last beliefs) %s",
         "color:#666;font-weight:600",
         "color:inherit",
         error instanceof Error ? error.message : "request failed",
@@ -257,3 +189,4 @@ export class JevController {
     }
   }
 }
+

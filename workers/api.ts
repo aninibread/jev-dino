@@ -1,17 +1,11 @@
 import {
   LOOKAHEAD_COUNT,
-  buildTactics,
-  clearanceFor,
-  enrichUpcoming,
+  pickAction,
+  type DecideResponse,
   type DecideState,
   type ObstacleKind,
 } from "../app/lib/jev-contract";
-import {
-  ApiError,
-  decideWithJev,
-  heuristicDecide,
-  publicError,
-} from "./ai";
+import { ApiError, decideWithJev, publicError } from "./ai";
 
 const json = (body: unknown, status = 200) =>
   Response.json(body, {
@@ -86,15 +80,7 @@ function parseState(raw: Record<string, unknown>): DecideState {
       ? raw.px_per_sec
       : Math.max(raw.speed, 0.1) * 60;
 
-  const parsedRaw: Array<{
-    type: ObstacleKind;
-    dx: number;
-    width: number;
-    height: number;
-    y: number;
-    time_to_impact: number;
-    clearance: ReturnType<typeof clearanceFor>;
-  }> = [];
+  const parsedUpcoming: DecideState["upcoming"] = [];
   for (const item of upcoming) {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
       throw new ApiError(400, "Invalid obstacle.");
@@ -109,31 +95,21 @@ function parseState(raw: Record<string, unknown>): DecideState {
     ) {
       throw new ApiError(400, "Invalid obstacle fields.");
     }
-    const type = o.type as ObstacleKind;
     const time_to_impact =
       typeof o.time_to_impact === "number"
         ? o.time_to_impact
         : o.dx / px_per_sec;
-    const clearance =
-      o.clearance === "jump" ||
-      o.clearance === "duck" ||
-      o.clearance === "either" ||
-      o.clearance === "clear"
-        ? o.clearance
-        : clearanceFor(type, o.y);
-    parsedRaw.push({
-      type,
+    parsedUpcoming.push({
+      type: o.type as ObstacleKind,
       dx: o.dx,
       width: o.width,
       height: o.height,
       y: o.y,
       time_to_impact,
-      clearance,
     });
   }
 
-  const upcomingEnriched = enrichUpcoming(parsedRaw);
-  const partial = {
+  return {
     t: raw.t,
     speed: raw.speed,
     px_per_sec,
@@ -142,15 +118,9 @@ function parseState(raw: Record<string, unknown>): DecideState {
       vy: d.vy,
       ducking: d.ducking,
       grounded: d.grounded,
-      ascending: typeof d.ascending === "boolean" ? d.ascending : false,
-      est_landing_s:
-        typeof d.est_landing_s === "number" ? d.est_landing_s : 0,
+      ascending: typeof d.ascending === "boolean" ? d.ascending : d.vy < 0,
     },
-    upcoming: upcomingEnriched,
-  };
-  return {
-    ...partial,
-    tactics: buildTactics(partial),
+    upcoming: parsedUpcoming,
   };
 }
 
@@ -173,8 +143,20 @@ export async function handleApi(
         return json(decision);
       } catch (error) {
         console.error("jev decide failed", error);
-        const fallback = heuristicDecide(state);
-        return json({ ...fallback, durationMs: 0 });
+        // No heuristic stand-in — surface failure so the client holds beliefs.
+        const { status, message } = publicError(error);
+        return json(
+          {
+            action: "run" as const,
+            jump_now: 0,
+            duck_now: 0,
+            confidence: 0,
+            durationMs: 0,
+            source: "none" as const,
+            error: message,
+          } satisfies DecideResponse & { error: string },
+          status >= 500 ? 502 : status,
+        );
       }
     }
 
@@ -188,3 +170,5 @@ export async function handleApi(
     return json({ error: message }, status);
   }
 }
+
+export { pickAction };

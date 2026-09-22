@@ -4,17 +4,13 @@ import type {
   JevAction,
   UpcomingObstacle,
 } from "../lib/jev-contract";
-import { nextActionable } from "../lib/jev-contract";
 
 function pct(n: number): string {
   return `${Math.round(Math.min(1, Math.max(0, n)) * 100)}%`;
 }
 
 function fmtObstacle(o: UpcomingObstacle): string {
-  const chain = o.chain_with_next ? " chain" : "";
-  const gap =
-    o.gap_to_next_s > 0 ? ` gap→${o.gap_to_next_s.toFixed(2)}s` : "";
-  return `${o.type} ${o.clearance} tti=${o.time_to_impact.toFixed(2)}s${gap}${chain}`;
+  return `${o.type} dx=${Math.round(o.dx)} y=${Math.round(o.y)} tti=${o.time_to_impact.toFixed(2)}s`;
 }
 
 function fmtWindow(upcoming: UpcomingObstacle[]): string {
@@ -26,19 +22,17 @@ function fmtDino(state: DecideState): string {
   const d = state.dino;
   if (d.grounded) return d.ducking ? "ducking" : "grounded";
   const dir = d.ascending ? "↑" : "↓";
-  return `airborne ${dir} land~${d.est_landing_s.toFixed(2)}s`;
+  return `airborne ${dir} y=${Math.round(d.y)} vy=${d.vy.toFixed(1)}`;
 }
 
 /** One-line snapshot of what we're asking Jev. */
 export function formatJevAsk(state: DecideState): string {
-  const next = nextActionable(state.upcoming);
-  const focus = next ? fmtObstacle(next) : "no actionable hazard";
+  const next = state.upcoming[0];
   return [
     `t=${state.t.toFixed(1)}s`,
     `spd=${state.speed.toFixed(1)}`,
     fmtDino(state),
-    `focus: ${focus}`,
-    `tactics: ${state.tactics.recommended}${state.tactics.chain_active ? " (chain)" : ""} — ${state.tactics.reason}`,
+    next ? `nearest: ${fmtObstacle(next)}` : "nearest: none",
     `window: ${fmtWindow(state.upcoming)}`,
   ].join(" | ");
 }
@@ -48,7 +42,7 @@ export function formatJevReply(
   decision: DecideResponse,
   state: DecideState,
 ): string {
-  const next = nextActionable(state.upcoming);
+  const next = state.upcoming[0];
   return [
     decision.action.toUpperCase(),
     `jump=${pct(decision.jump_now)}`,
@@ -66,20 +60,21 @@ export function formatJevAct(
   decision: DecideResponse,
   state: DecideState | null,
 ): string {
-  const next = state ? nextActionable(state.upcoming) : null;
+  const next = state?.upcoming[0];
   return [
     `${from.toUpperCase()} → ${to.toUpperCase()}`,
     `jump=${pct(decision.jump_now)} duck=${pct(decision.duck_now)}`,
     decision.source,
     next ? fmtObstacle(next) : "no hazard",
-    state?.tactics.reason ? `· ${state.tactics.reason}` : "",
-  ]
-    .filter(Boolean)
-    .join(" | ");
+  ].join(" | ");
 }
 
 export function logJevAsk(state: DecideState): void {
-  console.log(`%c[Jev ask]%c ${formatJevAsk(state)}`, "color:#0a7;font-weight:600", "color:inherit");
+  console.log(
+    `%c[Jev ask]%c ${formatJevAsk(state)}`,
+    "color:#0a7;font-weight:600",
+    "color:inherit",
+  );
 }
 
 export function logJevReply(

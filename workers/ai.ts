@@ -1,10 +1,4 @@
 import {
-  JUMP_AIRTIME_S,
-  duckLeadSeconds,
-  heuristicDecide,
-  jumpEarliestSeconds,
-  jumpLeadSeconds,
-  nextActionable,
   pickAction,
   type DecideResponse,
   type DecideState,
@@ -67,86 +61,71 @@ export function parseDecideResponse(
   };
 }
 
+/**
+ * Ask Jev with raw lane state only — no tactics / clearance / planner hints.
+ */
 export async function decideWithJev(
   ai: Ai,
   state: DecideState,
   signal?: AbortSignal,
 ): Promise<DecideResponse> {
   const start = performance.now();
-  const next = nextActionable(state.upcoming);
   const window = state.upcoming.slice(0, 6).map((o) => ({
     type: o.type,
-    clearance: o.clearance,
-    time_to_impact_seconds: Number(o.time_to_impact.toFixed(3)),
-    gap_to_next_seconds: Number(o.gap_to_next_s.toFixed(3)),
-    chain_with_next: o.chain_with_next,
+    dx_px: Math.round(o.dx),
+    width_px: o.width,
+    height_px: o.height,
     y: o.y,
+    seconds_until_reach: Number(o.time_to_impact.toFixed(3)),
   }));
+
   const result = await ai.run(
     "typesafe/jev",
     {
       state: {
-        ...state,
-        decision_hint: next
-          ? {
-              nearest_actionable: {
-                type: next.type,
-                clearance: next.clearance,
-                time_to_impact_seconds: Number(next.time_to_impact.toFixed(3)),
-                gap_to_next_seconds: Number(next.gap_to_next_s.toFixed(3)),
-                chain_with_next: next.chain_with_next,
-              },
-              /** Every obstacle in the current lookahead window (nearest first). */
-              obstacles_in_window: window,
-              clearance_guide: {
-                jump: "Must jump (cactus or low bird).",
-                duck: "Must duck and hold through the pass.",
-                either: "Jump or duck both work — prefer jump.",
-                clear: "High bird — run; no jump/duck needed.",
-              },
-              jump_lead_seconds: Number(
-                jumpLeadSeconds(next.width, state.speed).toFixed(3),
-              ),
-              jump_earliest_seconds: Number(
-                jumpEarliestSeconds(next.width, state.speed).toFixed(3),
-              ),
-              jump_airtime_seconds: JUMP_AIRTIME_S,
-              duck_lead_seconds: Number(
-                duckLeadSeconds(state.speed).toFixed(3),
-              ),
-              grounded: state.dino.grounded,
-              ascending: state.dino.ascending,
-              est_landing_seconds: state.dino.est_landing_s,
-              tactics_recommended: state.tactics.recommended,
-              tactics_reason: state.tactics.reason,
-              chain_active: state.tactics.chain_active,
-              chain_note:
-                "chain_with_next is ONLY true when the next jumpable is closer than ~0.5s — do not speed-drop for comfortable gaps.",
-            }
-          : {
-              nearest_actionable: null,
-              obstacles_in_window: window,
-              tactics_recommended: "run",
-              tactics_reason: "no actionable hazard",
-            },
+        race_time_seconds: Number(state.t.toFixed(2)),
+        speed: Number(state.speed.toFixed(2)),
+        pixels_per_second: Number(state.px_per_sec.toFixed(1)),
+        dino: {
+          y: state.dino.y,
+          vertical_velocity: state.dino.vy,
+          grounded: state.dino.grounded,
+          ducking: state.dino.ducking,
+          ascending: state.dino.ascending,
+        },
+        /**
+         * Same info a human has on screen: obstacles ahead, their size/height,
+         * and how soon they arrive at the current scroll speed.
+         * Bird y≈50 is high (often clear while standing), y≈75 mid, y≈100 low.
+         * Cacti always sit on the ground — jump them.
+         * Duck mid-air = fast-fall (speed-drop) like Chrome Dino.
+         */
+        obstacles_ahead: window,
+        notes: {
+          canvas_y_grows_downward: true,
+          dino_ground_y_about: 93,
+          standing_dino_height_px: 47,
+          ducking_dino_height_px: 25,
+          jump_airtime_about_seconds: 0.58,
+        },
       },
       questions: {
         jump_now: {
           type: "noul",
           instructions:
-            "Should the dinosaur JUMP RIGHT NOW? Prefer decision_hint.tactics_recommended. Jump only if grounded and nearest_actionable clearance is jump/either and tti is in the LATE window (0 < tti <= jump_lead_seconds). Never jump early. If clearance is duck or clear, return near 0. If airborne, return near 0. Use obstacles_in_window to see what comes after — only set up a chain when chain_with_next is true on the current jumpable.",
+            "You control the dinosaur. Looking only at obstacles_ahead and dino pose, should you JUMP RIGHT NOW? Jump for ground cacti and low birds when they are close enough to clear — not too early (you'll land on them) and not too late. Do not jump into a high bird that a standing dino would run under. If already airborne, usually near 0 (you cannot jump again until you land). Return a belief 0–1.",
           criteria: {
-            true: "Grounded and inside the late jump window for a jump/either hazard.",
-            false: "Too early, airborne, must duck, clear overhead bird, or not a jump hazard.",
+            true: "Jump this instant to clear the hazard.",
+            false: "Do not jump now.",
           },
         },
         duck_now: {
           type: "noul",
           instructions:
-            "Should the dinosaur DUCK or SPEED-DROP RIGHT NOW? Valid cases: (1) Grounded + clearance duck — duck and HOLD through negative tti until the bird passes. (2) Grounded + clearance either — duck is optional vs jump. (3) Airborne speed-drop ONLY when chain_active / chain_with_next is true or tactics_reason mentions speed-drop for a tight gap — never slam every consecutive obstacle. Clearance clear → near 0. Prefer tactics_recommended.",
+            "Should you DUCK RIGHT NOW? Duck under birds that would hit a standing dino, and keep ducking until the bird has passed. Mid-air, duck means speed-drop (slam down) when you need to land sooner for a tight next obstacle. High birds that clear a standing runner → near 0. Return a belief 0–1.",
           criteria: {
-            true: "Duck under a must-duck bird (hold through pass), OR mid-air speed-drop for a TIGHT chain only.",
-            false: "Do not duck or speed-drop (including clear overhead birds and comfortable gaps).",
+            true: "Duck or speed-drop this instant.",
+            false: "Do not duck now.",
           },
         },
       },
@@ -172,4 +151,4 @@ export function publicError(error: unknown): {
   return { status: 500, message: "Something went wrong. Try again." };
 }
 
-export { heuristicDecide, pickAction };
+export { pickAction };

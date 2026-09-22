@@ -14,14 +14,7 @@ import { JevController } from "./jevController";
 import { ObstacleManager } from "./obstacles";
 import { stepSpeed } from "./speedCurve";
 import type { DecideResponse, JevAction } from "../lib/jev-contract";
-import {
-  buildTactics,
-  clearanceFor,
-  enrichUpcoming,
-  estimateLandingSeconds,
-  LOOKAHEAD_COUNT,
-  LOOKAHEAD_S,
-} from "../lib/jev-contract";
+import { LOOKAHEAD_COUNT, LOOKAHEAD_S } from "../lib/jev-contract";
 
 export type RacePhase = "idle" | "playing" | "spectating" | "ended";
 export type Winner = "you" | "jev" | "tie" | null;
@@ -261,26 +254,19 @@ export class RaceGame {
   private buildJevState() {
     if (!this.live || this.jev.crashed) return null;
     const px_per_sec = Math.max(this.speed, 0.1) * 60;
-    const raw = this.obstacles
+    // Raw window only — geometry a player can see, no tactics / clearance.
+    const upcoming = this.obstacles
       .upcomingFor(TREX.START_X, LOOKAHEAD_COUNT)
-      .map((o) => {
-        const time_to_impact = o.dx / px_per_sec;
-        return {
-          ...o,
-          time_to_impact,
-          clearance: clearanceFor(o.type, o.y),
-        };
-      })
+      .map((o) => ({
+        type: o.type,
+        dx: o.dx,
+        width: o.width,
+        height: o.height,
+        y: o.y,
+        time_to_impact: o.dx / px_per_sec,
+      }))
       .filter((o) => o.time_to_impact < LOOKAHEAD_S);
-    const upcoming = enrichUpcoming(raw);
-    const est_landing_s = this.jev.grounded
-      ? 0
-      : estimateLandingSeconds(
-          this.jev.yPos,
-          this.jev.jumpVelocity,
-          this.jev.groundYPos,
-        );
-    const partial = {
+    return {
       t: this.elapsedMs / 1000,
       speed: this.speed,
       px_per_sec,
@@ -290,13 +276,8 @@ export class RaceGame {
         ducking: this.jev.ducking,
         grounded: this.jev.grounded,
         ascending: this.jev.jumping && this.jev.jumpVelocity < 0,
-        est_landing_s: Number(est_landing_s.toFixed(3)),
       },
       upcoming,
-    };
-    return {
-      ...partial,
-      tactics: buildTactics(partial),
     };
   }
 
