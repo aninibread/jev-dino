@@ -79,13 +79,13 @@ a:focus-visible {
 .page {
   width: min(100% - 32px, 640px);
   margin: 0 auto;
-  padding: 56px 0 40px;
+  padding: 40px 0 24px;
   align-self: start;
 }
 
 .intro {
   text-align: center;
-  margin-bottom: 28px;
+  margin-bottom: 18px;
 }
 
 .intro h1 {
@@ -103,7 +103,7 @@ a:focus-visible {
 .race-stage {
   display: grid;
   justify-items: center;
-  gap: 14px;
+  gap: 10px;
   width: 100%;
 }
 
@@ -171,7 +171,7 @@ a:focus-visible {
   width: 100%;
   max-width: 600px;
   border-top: 1px solid var(--line);
-  padding-top: 14px;
+  padding-top: 10px;
   color: var(--ink);
 }
 
@@ -258,7 +258,7 @@ a:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin: 0 0 8px;
+  margin: 0 0 4px;
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.04em;
@@ -267,8 +267,8 @@ a:focus-visible {
 }
 
 .jev-io-section-head-profile {
-  margin-top: 14px;
-  padding-top: 10px;
+  margin-top: 6px;
+  padding-top: 6px;
   border-top: 1px solid var(--line);
 }
 
@@ -286,11 +286,18 @@ a:focus-visible {
 .jev-io-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 18px 24px;
+  gap: 10px 20px;
+  align-items: stretch;
+}
+
+.jev-io-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .jev-io-col h3 {
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.04em;
@@ -301,16 +308,17 @@ a:focus-visible {
 .jev-io-facts {
   margin: 0;
   display: grid;
-  gap: 6px;
+  gap: 4px;
+  flex: 1;
 }
 
 .jev-io-facts > div {
   display: grid;
-  grid-template-columns: 7.5rem 1fr;
+  grid-template-columns: 7rem 1fr;
   gap: 8px;
   align-items: baseline;
-  font-size: 13px;
-  line-height: 1.25;
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 .jev-io-facts dt {
@@ -341,24 +349,26 @@ a:focus-visible {
 
 .jev-probs {
   list-style: none;
-  margin: 0 0 12px;
+  margin: 0 0 6px;
   padding: 0;
   display: grid;
-  gap: 8px;
+  gap: 5px;
 }
 
 .jev-probs-profile {
   margin-top: 0;
+  margin-bottom: 0;
   padding-top: 0;
   border-top: 0;
+  flex: 1;
 }
 
 .jev-prob-label {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  font-size: 13px;
-  margin-bottom: 3px;
+  font-size: 12px;
+  margin-bottom: 2px;
 }
 
 .jev-prob-label strong {
@@ -397,7 +407,7 @@ a:focus-visible {
   display: grid;
   justify-items: center;
   gap: 10px;
-  min-height: 52px;
+  min-height: 44px;
   width: 100%;
 }
 
