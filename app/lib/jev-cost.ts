@@ -72,9 +72,6 @@ export function parseInputTokensFromResult(result: unknown): number | null {
 }
 
 export function formatJevCostUsd(costUsd: number): string {
-  if (!Number.isFinite(costUsd) || costUsd <= 0) return "$0";
-  if (costUsd < 0.0001) return `$${costUsd.toFixed(6)}`;
-  if (costUsd < 0.01) return `$${costUsd.toFixed(5)}`;
-  if (costUsd < 1) return `$${costUsd.toFixed(4)}`;
-  return `$${costUsd.toFixed(2)}`;
+  const safe = Number.isFinite(costUsd) ? Math.max(0, costUsd) : 0;
+  return `$${safe.toFixed(4)}`;
 }
