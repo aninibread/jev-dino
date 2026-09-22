@@ -170,7 +170,6 @@ a:focus-visible {
 .jev-io {
   width: 100%;
   max-width: 600px;
-  border-top: 1px solid var(--line);
   padding-top: 14px;
   color: var(--ink);
 }
@@ -287,6 +286,13 @@ a:focus-visible {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 18px 24px;
+  align-items: stretch;
+}
+
+.jev-io-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .jev-io-col h3 {
@@ -302,6 +308,7 @@ a:focus-visible {
   margin: 0;
   display: grid;
   gap: 6px;
+  flex: 1;
 }
 
 .jev-io-facts > div {
@@ -349,8 +356,10 @@ a:focus-visible {
 
 .jev-probs-profile {
   margin-top: 0;
+  margin-bottom: 0;
   padding-top: 0;
   border-top: 0;
+  flex: 1;
 }
 
 .jev-prob-label {
@@ -399,6 +408,74 @@ a:focus-visible {
   gap: 10px;
   min-height: 52px;
   width: 100%;
+}
+
+/* Desktop-only: shorter I/O, less space above title, pad above Race again. */
+@media (min-width: 641px) {
+  .page {
+    padding: 24px 0 24px;
+  }
+
+  .intro {
+    margin-bottom: 12px;
+  }
+
+  .race-stage {
+    gap: 8px;
+  }
+
+  .jev-io {
+    padding-top: 8px;
+  }
+
+  .jev-io-grid {
+    gap: 6px 16px;
+  }
+
+  .jev-io-col h3 {
+    margin-bottom: 4px;
+    font-size: 10px;
+  }
+
+  .jev-io-section-head {
+    margin-bottom: 2px;
+    font-size: 10px;
+  }
+
+  .jev-io-section-head-profile {
+    margin-top: 4px;
+    padding-top: 4px;
+  }
+
+  .jev-io-facts {
+    gap: 2px;
+  }
+
+  .jev-io-facts > div {
+    grid-template-columns: 6.75rem 1fr;
+    font-size: 12px;
+    line-height: 1.12;
+  }
+
+  .jev-probs {
+    gap: 3px;
+    margin-bottom: 4px;
+  }
+
+  .jev-prob-label {
+    font-size: 12px;
+    margin-bottom: 1px;
+  }
+
+  .jev-prob-track {
+    height: 3px;
+  }
+
+  .race-actions {
+    min-height: 44px;
+    margin-top: 14px;
+    padding-top: 6px;
+  }
 }
 
 .primary {
