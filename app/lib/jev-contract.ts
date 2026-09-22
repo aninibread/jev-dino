@@ -101,36 +101,6 @@ export const EMPTY_PROFILE_PROBABILITIES: JumpProfileProbabilities = {
   full: 0,
 };
 
-export function likelyManeuverFor(
-  flightPath: FlightPath,
-): Maneuver {
-  if (flightPath === "blocks_running_only") return "duck";
-  if (flightPath === "clears_running_dinosaur") return "keep_running";
-  return "jump";
-}
-
-/** Whether a short recovery is physically safe for this maneuver + obstacle. */
-export function shortRecoveryAllowed(
-  action: Maneuver,
-  obstacle: Pick<ObstacleDecisionState, "kind" | "group" | "flight_path">,
-): boolean {
-  if (action === "keep_running") return false;
-  if (action === "duck") return true;
-  // Single small cactus: short hop still clears, lands sooner.
-  if (obstacle.kind === "small_cactus" && obstacle.group === "single") {
-    return true;
-  }
-  // Low pterodactyl jump: short so we can land before a high follow-up
-  // (clears_running) instead of staying airborne into it.
-  if (
-    obstacle.kind === "pterodactyl" &&
-    obstacle.flight_path === "blocks_running_and_ducking"
-  ) {
-    return true;
-  }
-  return false;
-}
-
 export function labelManeuver(action: Maneuver): string {
   if (action === "keep_running") return "Keep running";
   if (action === "jump") return "Jump";
@@ -227,7 +197,6 @@ export function buildManeuverState(state: DecideState) {
       flight_path: state.obstacle.flight_path,
       width_px: state.obstacle.width_px,
     },
-    likely_maneuver: likelyManeuverFor(state.obstacle.flight_path),
     timing_policy: "Browser code times the maneuver.",
   };
 }
@@ -265,7 +234,6 @@ export function buildManeuverQuestions() {
       instructions: [
         "Choose jump, duck, or keep_running for target_obstacle.",
         "Read target_obstacle.kind, group_size, flight_path, and width_px.",
-        "Use likely_maneuver as a hint from flight_path.",
         "dinosaur_motion_when_observed is only what the dinosaur was doing when",
         "the obstacle was first seen; do not assume it is still true at action.",
         "timing_policy: browser code times the maneuver; you only choose which.",

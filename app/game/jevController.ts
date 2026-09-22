@@ -11,7 +11,6 @@ import {
   EMPTY_PROFILE_PROBABILITIES,
   birdAltitude,
   flightPathFor,
-  shortRecoveryAllowed,
   toGroup,
   toSemanticKind,
   type BirdAltitude,
@@ -719,14 +718,9 @@ export class JevController {
     });
   }
 
-  private effectiveProfileFor(
-    action: DecideResponse["action"],
-    ask: JevAskView,
-    raw: JumpProfile,
-  ): JumpProfile {
-    if (raw !== "short") return "full";
-    if (!shortRecoveryAllowed(action, ask.obstacle)) return "full";
-    return "short";
+  /** Trust Jev's short/full; code only times when duck-after-clear runs. */
+  private effectiveProfileFor(raw: JumpProfile): JumpProfile {
+    return raw === "short" ? "short" : "full";
   }
 
   private mergeProfileIntoDecision(plan: Plan): void {
@@ -754,11 +748,7 @@ export class JevController {
       return;
     }
 
-    const effectiveJumpProfile = this.effectiveProfileFor(
-      action,
-      plan.ask,
-      raw.jump_profile,
-    );
+    const effectiveJumpProfile = this.effectiveProfileFor(raw.jump_profile);
     plan.decision = {
       ...plan.decision,
       jump_profile: effectiveJumpProfile,
