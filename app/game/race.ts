@@ -38,8 +38,6 @@ export type RaceSnapshot = {
   jevIoError: string | null;
   jevProfileStatus: JevIoStatus;
   jevProfileError: string | null;
-  /** Seconds left in the watch-Jev window (spectating only). */
-  spectateLeftMs: number;
 };
 
 export type RaceCallbacks = {
@@ -452,10 +450,6 @@ export class RaceGame {
       jevIoError: this.jevIoError,
       jevProfileStatus: this.jevProfileStatus,
       jevProfileError: this.jevProfileError,
-      spectateLeftMs:
-        this.phase === "spectating"
-          ? Math.max(0, SPECTATE_MS - this.spectateElapsedMs)
-          : 0,
     });
   }
 

@@ -428,12 +428,6 @@ a:focus-visible {
   color: var(--muted);
 }
 
-.touch-spectate-meta {
-  margin: -8px 0 0;
-  text-align: center;
-  font-size: 12px;
-}
-
 .touch-btn {
   min-height: 56px;
   border: 1px solid var(--line);
