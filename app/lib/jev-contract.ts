@@ -223,8 +223,6 @@ export function buildManeuverState(state: DecideState) {
           seconds_until_next: Number(
             state.next_obstacle.seconds_until_next.toFixed(3),
           ),
-          is_tight_follow_up:
-            state.next_obstacle.seconds_until_next <= TIGHT_NEXT_SECONDS,
         }
       : null,
     timing_policy:
@@ -271,8 +269,8 @@ export function buildManeuverQuestions() {
 }
 
 /**
- * Recovery profile. Prefer full; short only for a tight follow-up.
- * Eligibility and duck-after-clear timing are enforced in browser code.
+ * Recovery profile. Prefer full; short when the next gap is close enough
+ * that earlier recovery helps. Timing/eligibility stay in browser code.
  */
 export function buildJumpProfileQuestions() {
   return {
@@ -281,7 +279,8 @@ export function buildJumpProfileQuestions() {
       instructions: [
         "Choose short or full recovery. Prefer full.",
         "Use chosen_maneuver when present, else likely_maneuver.",
-        "Short only if next_obstacle.is_tight_follow_up; otherwise full.",
+        "Short when next_obstacle gap is close enough that you need to",
+        "recover for a second move soon; otherwise full (including null next).",
       ].join(" "),
       criteria: {
         short: {
