@@ -14,7 +14,8 @@ function pct(n: number): string {
 function fmtObstacle(o: UpcomingObstacle): string {
   const alt = o.bird_altitude ? ` ${o.bird_altitude}` : "";
   const jumped = o.already_jumped_for ? " jumped" : "";
-  return `${o.type}${alt} ${o.relation} dx=${Math.round(o.dx)} ~${o.seconds_away.toFixed(2)}s${jumped}`;
+  const size = `${Math.round(o.width)}×${Math.round(o.height)}px`;
+  return `${o.type}${alt} ${o.relation} ${size} dx=${Math.round(o.dx)} ~${o.seconds_away.toFixed(2)}s${jumped}`;
 }
 
 function fmtWindow(visible: UpcomingObstacle[]): string {
@@ -32,7 +33,13 @@ function fmtDino(state: DecideState): string {
 
 function fmtMemory(state: DecideState): string {
   const c = state.controls;
-  return `act=${c.previous_action}→${c.current_action} keys:j=${c.jump_key_held ? "1" : "0"}/d=${c.duck_key_held ? "1" : "0"} lastBelief j=${pct(c.last_press_jump)} d=${pct(c.last_press_duck)}`;
+  const seq = [
+    ...state.recent_actions.map((e) => e.action),
+    c.current_action,
+  ]
+    .filter((a, i, arr) => i === 0 || a !== arr[i - 1])
+    .join("→");
+  return `act=${c.previous_action}(${c.previous_action_held_for_s.toFixed(2)}s)→${c.current_action}(${c.current_action_held_for_s.toFixed(2)}s) seq=${seq} keys:j=${c.jump_key_held ? "1" : "0"}/d=${c.duck_key_held ? "1" : "0"}`;
 }
 
 function fmtAtomic(atomic: AtomicAnswers): string {

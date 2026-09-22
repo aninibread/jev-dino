@@ -9,6 +9,7 @@
 export type ObstacleKind = "cactus-small" | "cactus-large" | "bird";
 export type BirdAltitude = "high" | "mid" | "low";
 export type ObstacleRelation = "ahead" | "overlapping" | "passing";
+export type JevAction = "run" | "jump" | "duck";
 
 export type UpcomingObstacle = {
   id: string;
@@ -23,9 +24,18 @@ export type UpcomingObstacle = {
   already_jumped_for: boolean;
 };
 
+/** One past key-hold change — observational memory, not advice. */
 export type ActionEvent = {
   action: JevAction;
+  /** Race time when this action started. */
   at_t: number;
+  /** How long this action was held before the next change. */
+  held_for_s: number;
+  /** Nearest obstacle id when this action began (if any). */
+  nearest_obstacle_id: string | null;
+  nearest_obstacle_type: ObstacleKind | null;
+  nearest_width_px: number | null;
+  nearest_height_px: number | null;
 };
 
 /** Deterministic physics the player also knows — not tactical advice. */
@@ -52,6 +62,10 @@ export type DecideState = {
   controls: {
     current_action: JevAction;
     previous_action: JevAction;
+    /** Seconds the current action has been held so far. */
+    current_action_held_for_s: number;
+    /** Seconds the previous action was held. */
+    previous_action_held_for_s: number;
     jump_key_held: boolean;
     duck_key_held: boolean;
     last_press_jump: number;
@@ -64,8 +78,6 @@ export type DecideState = {
   /** Pixel gap between 1st and 2nd visible obstacle (null if <2). */
   gap_px: number | null;
 };
-
-export type JevAction = "run" | "jump" | "duck";
 
 /** Atomic parallel nouls — each is one narrow judgment from Jev. */
 export type AtomicAnswers = {
@@ -196,6 +208,51 @@ export function obstacleRelation(dx: number, width: number): ObstacleRelation {
   return "passing";
 }
 
+/** Standing dino hitbox (Chromium TREX). */
+const DINO_STANDING_HEIGHT = 47;
+const DINO_WIDTH = 44;
+
+function sizeLabel(type: ObstacleKind, width: number): string {
+  if (type === "cactus-small") return "small_cactus";
+  if (type === "cactus-large") return "large_cactus";
+  if (width >= 40) return "wide_bird";
+  return "bird";
+}
+
+function heightVsDino(
+  height: number,
+): "shorter_than_dino" | "about_dino_tall" | "taller_than_dino" {
+  if (height < DINO_STANDING_HEIGHT - 8) return "shorter_than_dino";
+  if (height > DINO_STANDING_HEIGHT + 2) return "taller_than_dino";
+  return "about_dino_tall";
+}
+
+function widthVsDino(
+  width: number,
+): "narrower_than_dino" | "about_dino_wide" | "wider_than_dino" {
+  if (width < DINO_WIDTH - 10) return "narrower_than_dino";
+  if (width > DINO_WIDTH + 5) return "wider_than_dino";
+  return "about_dino_wide";
+}
+
+function describeObstacleSize(
+  o: UpcomingObstacle,
+  px_per_sec: number,
+): Record<string, unknown> {
+  const seconds_to_fully_clear =
+    px_per_sec > 0 ? Number((o.width / px_per_sec).toFixed(3)) : 0;
+  return {
+    width_px: Math.round(o.width),
+    height_px: Math.round(o.height),
+    size_label: sizeLabel(o.type, o.width),
+    how_big: `${o.type} is ${Math.round(o.width)}px wide × ${Math.round(o.height)}px tall`,
+    height_vs_standing_dino: heightVsDino(o.height),
+    width_vs_dino: widthVsDino(o.width),
+    /** Time for the whole obstacle body to scroll past the dino at current speed. */
+    seconds_to_fully_clear,
+  };
+}
+
 /** Build structured state payload for System One (nested, backtick-friendly). */
 export function buildSystemOneState(state: DecideState) {
   const obstacles = state.visible.map((o, i) => ({
@@ -203,17 +260,40 @@ export function buildSystemOneState(state: DecideState) {
     id: o.id,
     type: o.type,
     distance_px: Math.round(o.dx),
-    width_px: o.width,
-    height_px: o.height,
-    seconds_away: Number(o.seconds_away.toFixed(3)),
+    seconds_until_front_edge: Number(o.seconds_away.toFixed(3)),
     relation: o.relation,
     already_jumped_for: o.already_jumped_for,
+    size: describeObstacleSize(o, state.px_per_sec),
     ...(o.bird_altitude ? { bird_altitude: o.bird_altitude } : {}),
   }));
+
+  const recent = state.recent_actions.map((ev) => ({
+    action: ev.action,
+    started_at_race_t: Number(ev.at_t.toFixed(3)),
+    held_for_seconds: Number(ev.held_for_s.toFixed(3)),
+    seconds_ago: Number(Math.max(0, state.t - ev.at_t).toFixed(3)),
+    nearest_obstacle_then: ev.nearest_obstacle_id
+      ? {
+          id: ev.nearest_obstacle_id,
+          type: ev.nearest_obstacle_type,
+          width_px: ev.nearest_width_px,
+          height_px: ev.nearest_height_px,
+        }
+      : null,
+  }));
+
+  const sequence = [
+    ...state.recent_actions.map((e) => e.action),
+    state.controls.current_action,
+  ];
+  const action_sequence = sequence
+    .filter((a, i) => i === 0 || a !== sequence[i - 1])
+    .join(" → ");
 
   return {
     race_time_seconds: Number(state.t.toFixed(2)),
     speed: Number(state.speed.toFixed(2)),
+    pixels_per_second: Math.round(state.px_per_sec),
     dino: {
       on_ground: state.dino.grounded,
       ducking: state.dino.ducking,
@@ -223,17 +303,27 @@ export function buildSystemOneState(state: DecideState) {
       seconds_aloft: state.dino.seconds_aloft,
       just_landed: state.dino.just_landed,
       seconds_since_landed: state.dino.seconds_since_landed,
+      standing_height_px: DINO_STANDING_HEIGHT,
+      standing_width_px: DINO_WIDTH,
     },
     memory: {
       current_action: state.controls.current_action,
+      current_action_held_for_seconds: Number(
+        state.controls.current_action_held_for_s.toFixed(3),
+      ),
       previous_action: state.controls.previous_action,
+      previous_action_held_for_seconds: Number(
+        state.controls.previous_action_held_for_s.toFixed(3),
+      ),
+      action_sequence,
       jump_key_held: state.controls.jump_key_held,
       duck_key_held: state.controls.duck_key_held,
       last_press_jump: state.controls.last_press_jump,
       last_press_duck: state.controls.last_press_duck,
       nearest_obstacle_id_when_jump_started:
         state.controls.nearest_id_when_jump_started,
-      recent_action_changes: state.recent_actions,
+      /** Chronological list of recent key-hold changes (oldest → newest). */
+      recent_actions: recent,
     },
     visible_obstacles: obstacles,
     gap_between_1st_and_2nd_px: state.gap_px,
@@ -267,16 +357,25 @@ export function buildSystemOneQuestions(hasSecond: boolean) {
           "Does the nearest visible obstacle require a jump to clear?",
         inspect: "`visible_obstacles[0]`",
         also_check: [
+          "`visible_obstacles[0].size`",
+          "`visible_obstacles[0].size.height_vs_standing_dino`",
+          "`visible_obstacles[0].size.width_px`",
+          "`visible_obstacles[0].size.how_big`",
           "`dino.on_ground`",
           "`visible_obstacles[0].already_jumped_for`",
+          "`memory.action_sequence`",
+          "`memory.recent_actions`",
         ],
         focus:
-          "Cactus or low bird, close enough to act. False if already_jumped_for and you are still clearing it, or high bird you run under.",
+          "Use size (wide/tall cactus needs an earlier jump). Cactus or low bird, close enough to act. False if already_jumped_for and you are still clearing it, or high bird you run under. Use memory.recent_actions to see what you already did for this obstacle.",
       },
       criteria: noulCriteria(
         "Must jump this obstacle (cactus or low bird) now or on landing.",
         "No jump needed for nearest (high bird, too far, or already clearing).",
-        ["Cactus 0.2s away on ground", "Low bird at feet height"],
+        [
+          "Large cactus taller_than_dino, 0.25s away",
+          "Low bird at feet height",
+        ],
         ["High bird overhead", "Already jumped, still in air over it"],
       ),
     },
@@ -286,13 +385,21 @@ export function buildSystemOneQuestions(hasSecond: boolean) {
         question:
           "Does the nearest obstacle require ducking (and holding duck while it passes)?",
         inspect: "`visible_obstacles[0]`",
+        also_check: [
+          "`visible_obstacles[0].size.width_px`",
+          "`visible_obstacles[0].size.height_px`",
+          "`visible_obstacles[0].size.seconds_to_fully_clear`",
+          "`memory.current_action`",
+          "`memory.current_action_held_for_seconds`",
+          "`memory.recent_actions`",
+        ],
         focus:
-          "Mid-height bird that hits a standing dino. Keep high through overlap if already ducking.",
+          "Mid-height bird that hits a standing dino. Wider birds need a longer duck hold (see seconds_to_fully_clear). Keep ducking through overlap if already ducking.",
       },
       criteria: noulCriteria(
         "Duck under the nearest bird and hold until it passes.",
         "No duck needed for nearest.",
-        ["Mid bird at head height approaching"],
+        ["Mid bird at head height approaching", "Already ducking under a wide bird"],
         ["High bird — run under", "Cactus — jump instead"],
       ),
     },
@@ -302,6 +409,10 @@ export function buildSystemOneQuestions(hasSecond: boolean) {
         question:
           "Can you safely run under the nearest obstacle without jumping or ducking?",
         inspect: "`visible_obstacles[0].bird_altitude`",
+        also_check: [
+          "`visible_obstacles[0].size`",
+          "`visible_obstacles[0].size.height_vs_standing_dino`",
+        ],
         focus: "Usually high birds. False for cacti and low birds.",
       },
       criteria: noulCriteria(
@@ -319,15 +430,22 @@ export function buildSystemOneQuestions(hasSecond: boolean) {
         compare: [
           "`dino.in_the_air`",
           "`memory.previous_action`",
+          "`memory.previous_action_held_for_seconds`",
+          "`memory.action_sequence`",
+          "`memory.recent_actions`",
           "`visible_obstacles[1]`",
+          "`visible_obstacles[1].size`",
         ],
         focus:
-          "True when a second cactus/bird still needs a jump soon after this arc. Uses memory of already jumping for the first.",
+          "True when a second cactus/bird still needs a jump soon after this arc. Check recent_actions for a jump you already started and the size of the next obstacle.",
       },
       criteria: noulCriteria(
         "Keep jump held through landing for a follow-up jump.",
         "Release jump — single obstacle or comfortable gap.",
-        ["Airborne after first of two close cacti", "just_landed with next cactus close"],
+        [
+          "Airborne after first of two close cacti",
+          "just_landed with next large cactus close",
+        ],
         ["Single cactus with wide gap", "High bird — don't jump"],
       ),
     },
@@ -340,9 +458,13 @@ export function buildSystemOneQuestions(hasSecond: boolean) {
           "`dino.in_the_air`",
           "`constraints.mid_air_duck_means_speed_drop`",
           "`gap_between_1st_and_2nd_px`",
+          "`visible_obstacles[0].size.width_px`",
+          "`visible_obstacles[0].size.seconds_to_fully_clear`",
+          "`memory.recent_actions`",
+          "`memory.action_sequence`",
         ],
         focus:
-          "Only when airborne, first obstacle already_jumped_for, second jumpable is tight.",
+          "Only when airborne, first obstacle already_jumped_for, second jumpable is tight. Wide first obstacles leave less airtime after clearing.",
       },
       criteria: noulCriteria(
         "Slam down now to land in time for the next jump.",
@@ -360,12 +482,18 @@ export function buildSystemOneQuestions(hasSecond: boolean) {
         question:
           "Will the second visible obstacle require a jump soon after the first?",
         inspect: "`visible_obstacles[1]`",
-        focus: "Ground cactus or low bird — not high birds you run under.",
+        also_check: [
+          "`visible_obstacles[1].size`",
+          "`visible_obstacles[1].size.height_vs_standing_dino`",
+          "`visible_obstacles[1].size.how_big`",
+        ],
+        focus:
+          "Ground cactus or low bird — not high birds you run under. Large/tall second cacti still need a jump.",
       },
       criteria: noulCriteria(
         "Second obstacle needs a jump after clearing the first.",
         "Second does not need a jump (high bird, far, or bird to duck).",
-        ["Second cactus 0.3s after first"],
+        ["Second large cactus 0.3s after first"],
         ["Second is high bird", "Second very far away"],
       ),
     };
@@ -377,14 +505,19 @@ export function buildSystemOneQuestions(hasSecond: boolean) {
         compare: [
           "`gap_between_1st_and_2nd_px`",
           "`speed`",
+          "`visible_obstacles[0].size.width_px`",
+          "`visible_obstacles[0].size.seconds_to_fully_clear`",
+          "`visible_obstacles[1].size`",
+          "`memory.action_sequence`",
+          "`memory.recent_actions`",
         ],
         focus:
-          "Small pixel gap at current speed — needs speed-drop or holding jump through landing.",
+          "Small pixel gap at current speed — especially after a wide first cactus. Needs speed-drop or holding jump through landing.",
       },
       criteria: noulCriteria(
         "Gap is tight — need chain (speed-drop or jump-on-land).",
         "Comfortable gap — normal single jump is fine.",
-        ["Two cacti ~120px apart at speed 9+"],
+        ["Two cacti ~120px apart at speed 9+", "Wide first cactus then small gap"],
         ["Wide spacing", "Only one obstacle"],
       ),
     };

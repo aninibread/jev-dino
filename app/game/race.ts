@@ -79,6 +79,8 @@ export class RaceGame {
   private prevAction: JevAction = "run";
   private currentAction: JevAction = "run";
   private recentActions: ActionEvent[] = [];
+  private actionStartedAtMs = 0;
+  private prevActionHeldForS = 0;
   private jumpedForIds = new Set<string>();
   private nearestIdWhenJumpStarted: string | null = null;
   private jumpStartedAtMs = 0;
@@ -252,6 +254,8 @@ export class RaceGame {
     this.prevAction = "run";
     this.currentAction = "run";
     this.recentActions = [];
+    this.actionStartedAtMs = 0;
+    this.prevActionHeldForS = 0;
     this.jumpedForIds.clear();
     this.nearestIdWhenJumpStarted = null;
     this.jumpStartedAtMs = 0;
@@ -262,11 +266,30 @@ export class RaceGame {
 
   private noteAction(action: JevAction) {
     if (action === this.currentAction) return;
+    const nowMs = this.elapsedMs;
+    const heldForS = Number(
+      Math.max(0, (nowMs - this.actionStartedAtMs) / 1000).toFixed(3),
+    );
+
+    // Close out the previous key-hold with how long it lasted + what was nearest.
+    if (this.recentActions.length > 0) {
+      const last = this.recentActions[this.recentActions.length - 1]!;
+      last.held_for_s = heldForS;
+    }
+    this.prevActionHeldForS = heldForS;
     this.prevAction = this.currentAction;
     this.currentAction = action;
+    this.actionStartedAtMs = nowMs;
+
+    const nearest = this.obstacles.upcomingFor(TREX.START_X, 1)[0];
     this.recentActions.push({
       action,
-      at_t: Number((this.elapsedMs / 1000).toFixed(2)),
+      at_t: Number((nowMs / 1000).toFixed(3)),
+      held_for_s: 0,
+      nearest_obstacle_id: nearest?.id ?? null,
+      nearest_obstacle_type: nearest?.type ?? null,
+      nearest_width_px: nearest ? Math.round(nearest.width) : null,
+      nearest_height_px: nearest ? Math.round(nearest.height) : null,
     });
     if (this.recentActions.length > 8) this.recentActions.shift();
   }
@@ -356,13 +379,32 @@ export class RaceGame {
       controls: {
         current_action: this.currentAction,
         previous_action: this.prevAction,
+        current_action_held_for_s: Number(
+          Math.max(0, (this.elapsedMs - this.actionStartedAtMs) / 1000).toFixed(
+            3,
+          ),
+        ),
+        previous_action_held_for_s: this.prevActionHeldForS,
         jump_key_held: pressJump >= 0.45,
         duck_key_held: pressDuck >= 0.45,
         last_press_jump: Number(pressJump.toFixed(3)),
         last_press_duck: Number(pressDuck.toFixed(3)),
         nearest_id_when_jump_started: this.nearestIdWhenJumpStarted,
       },
-      recent_actions: this.recentActions.slice(-6),
+      recent_actions: this.recentActions.slice(-6).map((ev) => ({
+        ...ev,
+        // Live duration for the still-open current hold.
+        held_for_s:
+          ev === this.recentActions[this.recentActions.length - 1] &&
+          ev.action === this.currentAction
+            ? Number(
+                Math.max(
+                  0,
+                  (this.elapsedMs - this.actionStartedAtMs) / 1000,
+                ).toFixed(3),
+              )
+            : ev.held_for_s,
+      })),
       visible,
       constraints: {
         can_jump_this_frame: this.jev.grounded && !this.jev.jumping,

@@ -150,9 +150,25 @@ function parseState(raw: Record<string, unknown>): DecideState {
     .slice(-8)
     .map((e) => {
       const ev = e as Record<string, unknown>;
+      const kind: ObstacleKind | null =
+        ev.nearest_obstacle_type === "cactus-small" ||
+        ev.nearest_obstacle_type === "cactus-large" ||
+        ev.nearest_obstacle_type === "bird"
+          ? (ev.nearest_obstacle_type as ObstacleKind)
+          : null;
       return {
         action: asAction(ev.action, "run"),
         at_t: typeof ev.at_t === "number" ? ev.at_t : 0,
+        held_for_s: typeof ev.held_for_s === "number" ? ev.held_for_s : 0,
+        nearest_obstacle_id:
+          typeof ev.nearest_obstacle_id === "string"
+            ? ev.nearest_obstacle_id
+            : null,
+        nearest_obstacle_type: kind,
+        nearest_width_px:
+          typeof ev.nearest_width_px === "number" ? ev.nearest_width_px : null,
+        nearest_height_px:
+          typeof ev.nearest_height_px === "number" ? ev.nearest_height_px : null,
       };
     });
 
@@ -194,6 +210,14 @@ function parseState(raw: Record<string, unknown>): DecideState {
     controls: {
       current_action: asAction(controlsRaw.current_action, "run"),
       previous_action: asAction(controlsRaw.previous_action, "run"),
+      current_action_held_for_s:
+        typeof controlsRaw.current_action_held_for_s === "number"
+          ? controlsRaw.current_action_held_for_s
+          : 0,
+      previous_action_held_for_s:
+        typeof controlsRaw.previous_action_held_for_s === "number"
+          ? controlsRaw.previous_action_held_for_s
+          : 0,
       jump_key_held: Boolean(controlsRaw.jump_key_held),
       duck_key_held: Boolean(controlsRaw.duck_key_held),
       last_press_jump:
