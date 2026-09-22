@@ -170,7 +170,6 @@ a:focus-visible {
 .jev-io {
   width: 100%;
   max-width: 600px;
-  border-top: 1px solid var(--line);
   padding-top: 14px;
   color: var(--ink);
 }
