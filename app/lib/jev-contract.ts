@@ -107,11 +107,23 @@ export function likelyManeuverFor(
 /** Whether a short recovery is physically safe for this maneuver + obstacle. */
 export function shortRecoveryAllowed(
   action: Maneuver,
-  obstacle: Pick<ObstacleDecisionState, "kind" | "group">,
+  obstacle: Pick<ObstacleDecisionState, "kind" | "group" | "flight_path">,
 ): boolean {
   if (action === "keep_running") return false;
   if (action === "duck") return true;
-  return obstacle.kind === "small_cactus" && obstacle.group === "single";
+  // Single small cactus: short hop still clears, lands sooner.
+  if (obstacle.kind === "small_cactus" && obstacle.group === "single") {
+    return true;
+  }
+  // Low pterodactyl jump: short so we can land before a high follow-up
+  // (clears_running) instead of staying airborne into it.
+  if (
+    obstacle.kind === "pterodactyl" &&
+    obstacle.flight_path === "blocks_running_and_ducking"
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function labelManeuver(action: Maneuver): string {
@@ -294,8 +306,10 @@ export function buildJumpProfileQuestions() {
         "Choose short or full recovery for the maneuver just taken.",
         "Use current_speed and next_obstacles (kind, path, width, gap).",
         "Lean short when the next obstacle is fairly close and earlier recovery",
-        "helps a second move. Lean full when the next gap is comfortable, or",
-        "when the next two look packed and wide so landing between them is risky.",
+        "helps a second move, including when the next path clears a running",
+        "dinosaur so you should land before it rather than stay airborne.",
+        "Lean full when the next gap is comfortable, or when the next two look",
+        "packed and wide so landing between them is risky.",
         "Prefer full when unsure.",
       ].join(" "),
       criteria: {
