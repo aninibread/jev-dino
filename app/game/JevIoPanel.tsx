@@ -222,6 +222,14 @@ export function JevIoPanel({
   const chosen = stickyChosen.current;
   const profileProbs = stickyProfileProbs.current;
   const chosenProfile = stickyChosenProfile.current;
+  // UI shows only the immediate next obstacle; profile ask still gets up to two.
+  const next = ask?.next_obstacles?.[0] ?? null;
+  const nextLabel = next
+    ? `${labelKind(next.kind)} ${labelGroup(next.group)}`
+    : "–";
+  const gapLabel = next
+    ? `${next.gap_px}px / ${next.seconds_until_next.toFixed(2)}s`
+    : "–";
 
   return (
     <section
@@ -256,6 +264,14 @@ export function JevIoPanel({
             <div>
               <dt>Motion at ask</dt>
               <dd>{ask ? labelMotion(ask.dinosaur_motion) : "–"}</dd>
+            </div>
+            <div>
+              <dt>Next</dt>
+              <dd>{nextLabel}</dd>
+            </div>
+            <div>
+              <dt>Gap to next</dt>
+              <dd>{gapLabel}</dd>
             </div>
           </dl>
         </div>
