@@ -248,6 +248,8 @@ export function buildManeuverQuestions() {
       instructions: [
         "Choose the single safest maneuver for the dinosaur to avoid",
         "the target obstacle and continue running.",
+        "Use target_obstacle.flight_path. Some flying dinosaurs clear a",
+        "running dino — then keep_running is correct; do not jump or duck.",
         "The dinosaur motion in the state is only what it was doing when the",
         "distant obstacle was first observed; do not assume that motion will",
         "still be active when the obstacle arrives.",
@@ -257,20 +259,21 @@ export function buildManeuverQuestions() {
       criteria: {
         jump: {
           what: [
-            "Jump over a ground hazard or an airborne obstacle whose path blocks",
-            "both a running and ducking dinosaur.",
+            "Jump over a ground hazard, or a low bird whose path blocks both",
+            "running and ducking.",
           ].join(" "),
         },
         duck: {
           what: [
-            "Duck under an airborne obstacle whose path blocks a running dinosaur",
-            "but leaves safe space for a ducking dinosaur.",
+            "Duck under a mid-height bird whose path blocks running but leaves",
+            "safe space while ducking.",
           ].join(" "),
         },
         keep_running: {
           what: [
-            "Keep running without jumping or ducking when the obstacle safely clears",
-            "the running dinosaur.",
+            "Keep running with no jump or duck when the obstacle clears the",
+            "running dinosaur — typically a high flying dinosaur",
+            "(flight_path clears_running_dinosaur).",
           ].join(" "),
         },
       },
