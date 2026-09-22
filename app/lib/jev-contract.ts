@@ -302,9 +302,10 @@ export function buildJumpProfileQuestions() {
         "Read current_speed, maneuver, target_obstacle, and next_obstacles",
         "(up to two entries with kind, group_size, flight_path, width_px,",
         "gap_px, seconds_until_next).",
-        "Lean short when next_obstacles[0] has a small gap_px /",
-        "seconds_until_next and earlier recovery helps the next move,",
-        "including when next_obstacles[0].flight_path is",
+        "Lean short when next_obstacles[0] is close (small gap_px /",
+        "seconds_until_next) so you can land and jump again,",
+        "including when next_obstacles[1] leaves a workable gap,",
+        "or when next_obstacles[0].flight_path is",
         "clears_running_dinosaur so you should land before it.",
         "Lean full when next_obstacles is empty or the first gap is comfortable.",
         "Clearing two obstacles in one full jump is rare: only lean that way when",
@@ -316,7 +317,7 @@ export function buildJumpProfileQuestions() {
         short: {
           what: [
             "next_obstacles[0] is close enough (gap_px / seconds_until_next)",
-            "that earlier recovery helps.",
+            "that landing early lets you take the next obstacle separately.",
           ].join(" "),
         },
         full: {
