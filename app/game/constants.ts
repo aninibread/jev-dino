@@ -30,16 +30,21 @@ export const CLEAR_TIME_MS = 4000;
  * obstacle reaches the visible canvas. Jev is asked as soon as the obstacle is
  * created, so this is the main lever for Workers AI latency.
  */
-export const JEV_ASK_LEAD_SECONDS = 3.5;
-/** Max obstacles waiting off-screen (keeps the decide queue from stampeding AI). */
-export const JEV_MAX_OFFSCREEN = 3;
+export const JEV_ASK_LEAD_SECONDS = 4.0;
+/** Max obstacles waiting off-screen (feeds the prefetch decide pool). */
+export const JEV_MAX_OFFSCREEN = 5;
+/**
+ * Max concurrent browser→Worker Jev fetches (maneuver + profile share this).
+ * Keep this high enough to prefetch the off-screen queue without stampeding.
+ */
+export const JEV_MAX_IN_FLIGHT = 6;
 /** Browser fetch budget for /api/jev-decide (must exceed server AI timeout). */
 export const JEV_CLIENT_TIMEOUT_MS = 8_000;
 /** Workers AI abort budget inside the decide handler. */
 export const JEV_SERVER_TIMEOUT_MS = 7_000;
 /**
- * If the next obstacle is still unknown, wait to ask until this many seconds
- * remain before the action proximity threshold — then ask with next=null.
+ * Prefer waiting briefly for next_obstacle before the profile call, but never
+ * delay the maneuver ask. Maneuvers fire as soon as the obstacle is seen.
  */
 export const JEV_ASK_DEADLINE_SECONDS = 1.6;
 
