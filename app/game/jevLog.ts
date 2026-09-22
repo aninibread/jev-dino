@@ -11,7 +11,8 @@ function pct(n: number): string {
 
 function fmtObstacle(o: UpcomingObstacle): string {
   const alt = o.bird_altitude ? ` ${o.bird_altitude}` : "";
-  return `${o.type}${alt} dx=${Math.round(o.dx)} ~${o.seconds_away.toFixed(2)}s`;
+  const jumped = o.already_jumped_for ? " jumped" : "";
+  return `${o.type}${alt} ${o.relation} dx=${Math.round(o.dx)} ~${o.seconds_away.toFixed(2)}s${jumped}`;
 }
 
 function fmtWindow(visible: UpcomingObstacle[]): string {
@@ -21,9 +22,15 @@ function fmtWindow(visible: UpcomingObstacle[]): string {
 
 function fmtDino(state: DecideState): string {
   const d = state.dino;
+  if (d.just_landed) return "just-landed";
   if (d.grounded) return d.ducking ? "ducking" : "grounded";
   const dir = d.ascending ? "↑" : "↓";
-  return `airborne ${dir} h=${d.jump_height_frac.toFixed(2)}`;
+  return `airborne ${dir} ${d.seconds_aloft.toFixed(2)}s h=${d.jump_height_frac.toFixed(2)}`;
+}
+
+function fmtMemory(state: DecideState): string {
+  const c = state.controls;
+  return `act=${c.previous_action}→${c.current_action} keys:j=${c.jump_key_held ? "1" : "0"}/d=${c.duck_key_held ? "1" : "0"} lastBelief j=${pct(c.last_press_jump)} d=${pct(c.last_press_duck)}`;
 }
 
 export function formatJevAsk(state: DecideState): string {
@@ -32,6 +39,7 @@ export function formatJevAsk(state: DecideState): string {
     `t=${state.t.toFixed(1)}s`,
     `spd=${state.speed.toFixed(1)}`,
     fmtDino(state),
+    fmtMemory(state),
     next ? `nearest: ${fmtObstacle(next)}` : "nearest: none",
     `visible: ${fmtWindow(state.visible)}`,
   ].join(" | ");

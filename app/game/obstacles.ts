@@ -18,7 +18,11 @@ function rand(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+let nextObstacleId = 1;
+
 export class Obstacle {
+  /** Stable id for the lifetime of this obstacle (for Jev memory). */
+  id: string;
   typeConfig: ObstacleTypeConfig;
   size: number;
   xPos: number;
@@ -38,6 +42,7 @@ export class Obstacle {
     elapsedMs: number,
     xOffset = 0,
   ) {
+    this.id = `obs-${nextObstacleId++}`;
     this.typeConfig = typeConfig;
     this.size = rand(1, maxObstacleSize(speed));
     if (this.size > 1 && typeConfig.multipleSpeed > speed) this.size = 1;
@@ -241,6 +246,7 @@ export class ObstacleManager {
       .filter((o) => o.xPos + o.width > dinoX)
       .slice(0, limit)
       .map((o) => ({
+        id: o.id,
         type: o.typeConfig.kind,
         dx: o.xPos - dinoX,
         width: o.width,

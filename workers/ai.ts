@@ -48,7 +48,6 @@ export function parseDecideResponse(
   value: unknown,
   airborne: boolean,
 ): Omit<DecideResponse, "durationMs" | "source"> {
-  // Prefer press_*; fall back to legacy jump_now/duck_now names.
   const press_jump =
     findNoul(value, "press_jump") ?? findNoul(value, "jump_now");
   const press_duck =
@@ -70,7 +69,7 @@ export function parseDecideResponse(
 }
 
 /**
- * Fair prompt: visible lane + key holds. No tactics / clearance / engine cheats.
+ * Fair prompt: visible lane + memory of what you already did. Key holds out.
  */
 export async function decideWithJev(
   ai: Ai,
@@ -80,11 +79,14 @@ export async function decideWithJev(
   const start = performance.now();
   const obstacles = state.visible.map((o, i) => ({
     index: i + 1,
+    id: o.id,
     type: o.type,
     distance_px: Math.round(o.dx),
     width_px: o.width,
     height_px: o.height,
     seconds_away: Number(o.seconds_away.toFixed(3)),
+    relation: o.relation,
+    already_jumped_for: o.already_jumped_for,
     ...(o.bird_altitude ? { bird_altitude: o.bird_altitude } : {}),
   }));
 
@@ -104,37 +106,55 @@ export async function decideWithJev(
           ducking: state.dino.ducking,
           in_the_air: state.dino.airborne,
           rising: state.dino.ascending,
-          how_high_in_jump: Number(state.dino.jump_height_frac.toFixed(2)),
+          how_high_in_jump: state.dino.jump_height_frac,
+          seconds_aloft: state.dino.seconds_aloft,
+          just_landed: state.dino.just_landed,
+          seconds_since_landed: state.dino.seconds_since_landed,
         },
-        /** Everything currently on the runway ahead of you (nearest first). */
+        /** What you are doing / just did — like remembering your own inputs. */
+        memory: {
+          current_action: state.controls.current_action,
+          previous_action: state.controls.previous_action,
+          jump_key_currently_held: state.controls.jump_key_held,
+          duck_key_currently_held: state.controls.duck_key_held,
+          your_last_press_jump_belief: state.controls.last_press_jump,
+          your_last_press_duck_belief: state.controls.last_press_duck,
+          nearest_obstacle_id_when_this_jump_started:
+            state.controls.nearest_id_when_jump_started,
+          recent_action_changes: state.recent_actions,
+        },
         visible_obstacles: obstacles,
         gap_between_1st_and_2nd_px: gap_1_to_2_px,
         how_to_read: {
-          cactus: "On the ground — you must jump over it.",
-          bird_high: "Flies overhead — usually run under it (don't jump into it).",
-          bird_mid: "Around head height — jump or duck.",
-          bird_low: "Near the ground — jump over it.",
+          already_jumped_for:
+            "true means you already left the ground for that obstacle — don't try to jump it again mid-air; look at the NEXT one.",
+          just_landed:
+            "true means feet just hit the ground — good moment to jump again if another cactus is close.",
+          cactus: "On the ground — jump over it.",
+          bird_high: "Overhead — usually run under (don't jump into it).",
+          bird_mid: "Head height — jump or duck.",
+          bird_low: "Near ground — jump.",
           duck_in_air:
-            "Holding duck while airborne makes you fall fast (like Chrome Dino) so you can jump again sooner for a close second obstacle.",
+            "Holding duck in the air = fast fall so you can jump sooner for a close second obstacle.",
         },
       },
       questions: {
         press_jump: {
           type: "noul",
           instructions:
-            "You play like a human holding the JUMP key. Look at ALL visible_obstacles, not just the first. Return high if you want the jump key HELD now: e.g. a cactus (or low bird) is close enough to clear, or you just landed and the next cactus still needs a jump. Return low if you should release jump (too early, already clearing by running under a high bird, or you need to duck instead). If you are in the air you cannot jump again — press_jump can stay high to jump the moment you land for a second obstacle. Answers are held until the next update (~0.5–1s), so think a step ahead.",
+            "Hold the JUMP key? Use memory + visible_obstacles. If already_jumped_for is true on the nearest obstacle and you are still in the air, you cannot jump again — keep press_jump high only if you want to jump the NEXT obstacle the instant you land. If just_landed and a not-yet-jumped cactus is close, press_jump should be high. If previous_action was jump and you're still airborne over that same cactus, don't expect another jump yet. Think ahead for consecutive obstacles. Answers persist ~0.5–1s.",
           criteria: {
-            true: "Hold the jump key.",
-            false: "Do not hold jump.",
+            true: "Hold jump.",
+            false: "Release jump.",
           },
         },
         press_duck: {
           type: "noul",
           instructions:
-            "You play like a human holding the DUCK key. High when: (1) a mid/low-ish bird needs crouching under, keep held until it passes; or (2) you are IN THE AIR after jumping the first of two CLOSE obstacles (small gap_between_1st_and_2nd_px / second still soon) and should slam down to land in time for the next jump. Low for high birds you can run under, and low when a normal single jump is enough. Mid-air duck = fast fall. Answers are held until the next update.",
+            "Hold the DUCK key? High for birds you must crouch under, or mid-air when already_jumped_for on #1 and a close #2 still needs a landing+jump (slam down). Use memory.current_action / previous_action and seconds_aloft. Low when a single normal jump is enough. Answers persist ~0.5–1s.",
           criteria: {
-            true: "Hold the duck key (or mid-air slam).",
-            false: "Do not hold duck.",
+            true: "Hold duck / mid-air slam.",
+            false: "Release duck.",
           },
         },
       },

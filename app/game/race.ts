@@ -13,8 +13,16 @@ import { CloudField, HorizonLine } from "./horizon";
 import { JevController } from "./jevController";
 import { ObstacleManager } from "./obstacles";
 import { stepSpeed } from "./speedCurve";
-import type { DecideResponse, JevAction } from "../lib/jev-contract";
-import { birdAltitude, VISIBLE_COUNT } from "../lib/jev-contract";
+import type {
+  ActionEvent,
+  DecideResponse,
+  JevAction,
+} from "../lib/jev-contract";
+import {
+  birdAltitude,
+  obstacleRelation,
+  VISIBLE_COUNT,
+} from "../lib/jev-contract";
 
 export type RacePhase = "idle" | "playing" | "spectating" | "ended";
 export type Winner = "you" | "jev" | "tie" | null;
@@ -67,6 +75,17 @@ export class RaceGame {
   private callbacks: RaceCallbacks;
   private duckHeld = false;
 
+  /** Observational memory for Jev (not advice). */
+  private prevAction: JevAction = "run";
+  private currentAction: JevAction = "run";
+  private recentActions: ActionEvent[] = [];
+  private jumpedForIds = new Set<string>();
+  private nearestIdWhenJumpStarted: string | null = null;
+  private jumpStartedAtMs = 0;
+  private landedAtMs = -1e9;
+  private wasJevAirborne = false;
+  private justLanded = false;
+
   constructor(
     canvas: HTMLCanvasElement,
     sprite: HTMLImageElement,
@@ -84,6 +103,7 @@ export class RaceGame {
       getState: () => this.buildJevState(),
       onDecision: (decision) => {
         this.lastJev = decision;
+        this.noteAction(decision.action);
         this.applyJevAction(decision.action);
         this.emit();
       },
@@ -229,48 +249,84 @@ export class RaceGame {
     this.horizonJev.reset();
     this.cloudsYou.reset();
     this.cloudsJev.reset();
+    this.prevAction = "run";
+    this.currentAction = "run";
+    this.recentActions = [];
+    this.jumpedForIds.clear();
+    this.nearestIdWhenJumpStarted = null;
+    this.jumpStartedAtMs = 0;
+    this.landedAtMs = -1e9;
+    this.wasJevAirborne = false;
+    this.justLanded = false;
   }
 
-  private startLoop() {
-    this.stopLoop();
-    this.lastTime = performance.now();
-    const frame = (now: number) => {
-      const delta = Math.min(now - this.lastTime, 50);
-      this.lastTime = now;
-      this.update(delta);
-      this.draw();
-      if (this.live) {
-        this.raf = requestAnimationFrame(frame);
-      }
-    };
-    this.raf = requestAnimationFrame(frame);
+  private noteAction(action: JevAction) {
+    if (action === this.currentAction) return;
+    this.prevAction = this.currentAction;
+    this.currentAction = action;
+    this.recentActions.push({
+      action,
+      at_t: Number((this.elapsedMs / 1000).toFixed(2)),
+    });
+    if (this.recentActions.length > 8) this.recentActions.shift();
   }
 
-  private stopLoop() {
-    if (this.raf) cancelAnimationFrame(this.raf);
-    this.raf = 0;
+  /** Track jump/land edges and which obstacle a jump was for. */
+  private trackJevMemory() {
+    const airborne = !this.jev.grounded;
+    // Keep "just landed" true briefly so the next Jev ask still sees it.
+    this.justLanded = this.elapsedMs - this.landedAtMs < 150;
+
+    if (airborne && !this.wasJevAirborne) {
+      // Jump just started — remember nearest visible threat.
+      this.jumpStartedAtMs = this.elapsedMs;
+      const nearest = this.obstacles.upcomingFor(TREX.START_X, 1)[0];
+      this.nearestIdWhenJumpStarted = nearest?.id ?? null;
+      if (nearest) this.jumpedForIds.add(nearest.id);
+    }
+
+    if (!airborne && this.wasJevAirborne) {
+      this.landedAtMs = this.elapsedMs;
+      this.justLanded = true;
+    }
+
+    this.wasJevAirborne = airborne;
   }
 
   private buildJevState() {
     if (!this.live || this.jev.crashed) return null;
     const px_per_sec = Math.max(this.speed, 0.1) * 60;
-    // Only obstacles a player can see on the 600px runway ahead of the dino.
     const visibleLimitPx = DEFAULT_WIDTH - TREX.START_X;
     const groundY = this.jev.groundYPos;
-    const jumpHeightFrac = this.jev.grounded
-      ? 0
-      : Math.min(1, Math.max(0, (groundY - this.jev.yPos) / 55));
+    const airborne = !this.jev.grounded;
+    const jumpHeightFrac = airborne
+      ? Math.min(1, Math.max(0, (groundY - this.jev.yPos) / 55))
+      : 0;
+    const secondsAloft = airborne
+      ? Math.max(0, (this.elapsedMs - this.jumpStartedAtMs) / 1000)
+      : 0;
+    const secondsSinceLanded = Math.max(
+      0,
+      (this.elapsedMs - this.landedAtMs) / 1000,
+    );
+
+    const decision = this.jevController.decision;
+    const pressJump = decision?.press_jump ?? 0;
+    const pressDuck = decision?.press_duck ?? 0;
 
     const visible = this.obstacles
       .upcomingFor(TREX.START_X, VISIBLE_COUNT)
       .filter((o) => o.dx < visibleLimitPx && o.dx + o.width > -30)
       .map((o) => ({
+        id: o.id,
         type: o.type,
         dx: o.dx,
         width: o.width,
         height: o.height,
         y: o.y,
         seconds_away: o.dx / px_per_sec,
+        relation: obstacleRelation(o.dx, o.width),
+        already_jumped_for: this.jumpedForIds.has(o.id),
         ...(o.type === "bird" ? { bird_altitude: birdAltitude(o.y) } : {}),
       }));
 
@@ -281,10 +337,25 @@ export class RaceGame {
       dino: {
         grounded: this.jev.grounded,
         ducking: this.jev.ducking,
-        airborne: !this.jev.grounded,
+        airborne,
         ascending: this.jev.jumping && this.jev.jumpVelocity < 0,
         jump_height_frac: Number(jumpHeightFrac.toFixed(2)),
+        seconds_aloft: Number(secondsAloft.toFixed(3)),
+        just_landed: this.justLanded,
+        seconds_since_landed: Number(
+          Math.min(secondsSinceLanded, 30).toFixed(3),
+        ),
       },
+      controls: {
+        current_action: this.currentAction,
+        previous_action: this.prevAction,
+        jump_key_held: pressJump >= 0.45,
+        duck_key_held: pressDuck >= 0.45,
+        last_press_jump: Number(pressJump.toFixed(3)),
+        last_press_duck: Number(pressDuck.toFixed(3)),
+        nearest_id_when_jump_started: this.nearestIdWhenJumpStarted,
+      },
+      recent_actions: this.recentActions.slice(-6),
       visible,
     };
   }
@@ -333,6 +404,7 @@ export class RaceGame {
     if (!this.jev.crashed) {
       // Apply Jev's key holds every frame (same as a human holding keys).
       const act = this.jevController.action;
+      this.noteAction(act);
       if (act === "duck") {
         this.jev.setDuck(true);
       } else if (act === "jump") {
@@ -342,6 +414,7 @@ export class RaceGame {
         this.jev.setDuck(false);
       }
       this.jev.update(deltaTime);
+      this.trackJevMemory();
       this.jevDistance += this.speed * deltaTime * 0.1;
     } else {
       this.jev.update(deltaTime);
