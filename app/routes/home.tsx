@@ -52,17 +52,12 @@ function Rules() {
     <div className="rules-content">
       <p>
         <b>You</b> control the top dinosaur. Desktop: Space / ↑ jump, ↓ duck.
-        Phone: tap Jump; hold Duck for birds.
+        Phone: tap Jump; hold Duck for pterodactyls.
       </p>
       <p>
         <b>Jev</b> runs the bottom lane on the same course. It sees the Input
-        panel on screen. For each obstacle it picks a <b>maneuver</b> (jump,
-        duck, or keep running) and, when jumping or ducking, a <b>profile</b>{" "}
-        (short or full recovery). The browser times when to press and release.
-      </p>
-      <p>
-        Race lasts <b>60 seconds</b>. First crash loses. Survive the minute and
-        distance decides.
+        panel, picks a <b>maneuver</b> (jump, duck, keep running) and a{" "}
+        <b>profile</b> (short or full). The browser times presses.
       </p>
     </div>
   );
