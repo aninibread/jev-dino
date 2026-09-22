@@ -16,6 +16,14 @@ export function logJevAsk(body: {
     width_px?: number;
     width?: number;
   };
+  next_obstacles?: Array<{
+    id: string;
+    kind?: string;
+    type?: string;
+    width_px?: number;
+    gap_px?: number;
+    seconds_until_next?: number;
+  }>;
   next_obstacle?: {
     id: string;
     kind?: string;
@@ -25,10 +33,18 @@ export function logJevAsk(body: {
   } | null;
 }): void {
   const o = body.obstacle;
-  const next = body.next_obstacle;
-  const nextBit = next
-    ? ` next=${next.kind ?? next.type} gap=${next.gap_px}px/${Number(next.seconds_until_next ?? 0).toFixed(2)}s`
-    : " next=none";
+  const nexts =
+    body.next_obstacles ??
+    (body.next_obstacle ? [body.next_obstacle] : []);
+  const nextBit =
+    nexts.length > 0
+      ? ` next=${nexts
+          .map(
+            (n) =>
+              `${n.kind ?? n.type}@${n.gap_px}px/${Number(n.seconds_until_next ?? 0).toFixed(2)}s`,
+          )
+          .join(",")}`
+      : " next=none";
   console.log(
     `%c[Jev ask]%c ${o.id} ${o.kind ?? o.type} ${o.group ?? ""} ${o.flight_path ?? ""} w=${o.width_px ?? o.width} spd=${body.speed.toFixed(1)} motion=${body.dinosaur_motion}${nextBit}`,
     "color:#0a7;font-weight:600",

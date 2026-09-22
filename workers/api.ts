@@ -122,13 +122,13 @@ function parseObstacle(
 function parseNextObstacle(
   raw: unknown,
   speed: number,
-): NextObstacleContext | null {
-  if (raw == null) return null;
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    throw new ApiError(400, "Invalid next_obstacle.");
+  label = "next_obstacle",
+): NextObstacleContext {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ApiError(400, `Invalid ${label}.`);
   }
   const value = raw as Record<string, unknown>;
-  const parsed = parseObstacle(value, "next_obstacle");
+  const parsed = parseObstacle(value, label);
   const gap_px =
     typeof value.gap_px === "number" && Number.isFinite(value.gap_px)
       ? Math.max(0, Math.round(value.gap_px))
@@ -150,6 +150,25 @@ function parseNextObstacle(
   };
 }
 
+function parseNextObstacles(
+  raw: unknown,
+  speed: number,
+): NextObstacleContext[] {
+  if (raw == null) return [];
+  // Accept legacy single next_obstacle for older clients.
+  if (!Array.isArray(raw)) {
+    if (typeof raw === "object") {
+      return [parseNextObstacle(raw, speed)];
+    }
+    throw new ApiError(400, "Invalid next_obstacles.");
+  }
+  return raw
+    .slice(0, 2)
+    .map((item, index) =>
+      parseNextObstacle(item, speed, `next_obstacles[${index}]`),
+    );
+}
+
 function parseState(raw: Record<string, unknown>): DecideState {
   const obstacle = raw.obstacle;
   if (
@@ -169,20 +188,18 @@ function parseState(raw: Record<string, unknown>): DecideState {
 
   const parsed = parseObstacle(obstacle as Record<string, unknown>, "obstacle");
 
-  const chosen =
-    raw.chosen_maneuver === "jump" ||
-    raw.chosen_maneuver === "duck" ||
-    raw.chosen_maneuver === "keep_running"
-      ? (raw.chosen_maneuver as Maneuver)
+  const maneuver =
+    raw.maneuver === "jump" ||
+    raw.maneuver === "duck" ||
+    raw.maneuver === "keep_running"
+      ? (raw.maneuver as Maneuver)
       : null;
+
+  const nextRaw =
+    raw.next_obstacles !== undefined ? raw.next_obstacles : raw.next_obstacle;
 
   return {
     speed: raw.speed,
-    predicted_speed:
-      typeof raw.predicted_speed === "number" &&
-      Number.isFinite(raw.predicted_speed)
-        ? raw.predicted_speed
-        : raw.speed,
     dinosaur_motion: motion,
     obstacle: {
       id: parsed.id,
@@ -191,8 +208,8 @@ function parseState(raw: Record<string, unknown>): DecideState {
       flight_path: parsed.flight_path,
       width_px: parsed.width_px,
     },
-    next_obstacle: parseNextObstacle(raw.next_obstacle, raw.speed),
-    chosen_maneuver: chosen,
+    next_obstacles: parseNextObstacles(nextRaw, raw.speed),
+    maneuver,
   };
 }
 

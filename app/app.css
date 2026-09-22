@@ -412,8 +412,9 @@ a:focus-visible {
 }
 
 .phase-ended .touch-ended {
-  /* Keep Race again below the old Jump/Duck hot zone without repeating the title. */
-  padding-top: 64px;
+  /* Match Jump/Duck vertical position once Watching Jev is gone. */
+  padding-top: 0;
+  gap: 0;
 }
 
 .touch-result {
@@ -426,12 +427,6 @@ a:focus-visible {
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--muted);
-}
-
-.touch-spectate-meta {
-  margin: -8px 0 0;
-  text-align: center;
-  font-size: 12px;
 }
 
 .touch-btn {

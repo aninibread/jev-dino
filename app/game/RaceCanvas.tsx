@@ -59,7 +59,6 @@ export function RaceCanvas({
   }, []);
 
   const phase = snapshot?.phase ?? "idle";
-  const spectateLeft = Math.ceil((snapshot?.spectateLeftMs ?? 0) / 1000);
   const raceLive =
     phase === "playing" || phase === "spectating" || phase === "ended";
 
@@ -122,9 +121,6 @@ export function RaceCanvas({
         ) : phase === "spectating" ? (
           <div className="touch-ended">
             <p className="touch-result">Watching Jev</p>
-            <p className="touch-spectate-meta muted">
-              {spectateLeft}s left · tap Race again anytime
-            </p>
             <button
               type="button"
               className="touch-btn touch-again"

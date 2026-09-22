@@ -176,7 +176,7 @@ export class ObstacleManager {
       this.addNewObstacle(speed, elapsedMs, spawnHorizon);
     }
 
-    // Eagerly keep a follow-on in the pipeline so Jev can see next_obstacle
+    // Eagerly keep follow-ons in the pipeline so Jev can see next_obstacles
     // when asking about the current one (not only once it crosses spawnHorizon).
     while (this.obstacles.length > 0) {
       const offscreen = this.obstacles.filter(

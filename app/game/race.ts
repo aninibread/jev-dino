@@ -5,9 +5,9 @@ import {
   GAME_DURATION_MS,
   LANE_GAP,
   LANE_HEIGHT,
-  SPECTATE_ACCEL_MULT,
   SPECTATE_ELAPSED_MULT,
   SPECTATE_MS,
+  spectateAccelMult,
 } from "./constants";
 import { Dino } from "./dino";
 import { CloudField, HorizonLine } from "./horizon";
@@ -38,8 +38,6 @@ export type RaceSnapshot = {
   jevIoError: string | null;
   jevProfileStatus: JevIoStatus;
   jevProfileError: string | null;
-  /** Seconds left in the watch-Jev window (spectating only). */
-  spectateLeftMs: number;
 };
 
 export type RaceCallbacks = {
@@ -102,7 +100,7 @@ export class RaceGame {
         this.jevProfileStatus = profileStatus;
         this.jevProfileError = profileError ?? null;
         this.lastJevAsk = ask;
-        if (decision) this.lastJev = decision;
+        this.lastJev = decision;
         this.emit();
       },
     });
@@ -268,6 +266,7 @@ export class RaceGame {
       speed: this.speed,
       dinosaurMotion,
       dinosaurX: this.jev.xPos,
+      reachedMinHeight: this.jev.reachedMinHeight,
       obstacles: this.obstacles.obstacles,
     };
   }
@@ -282,13 +281,15 @@ export class RaceGame {
     const difficultyDt = spectating
       ? deltaTime * SPECTATE_ELAPSED_MULT
       : deltaTime;
-    const speedDt = spectating ? deltaTime * SPECTATE_ACCEL_MULT : deltaTime;
+    // Ease accel up over a few seconds — faster climb, no sudden spike.
+    const speedDt = spectating
+      ? deltaTime * spectateAccelMult(this.spectateElapsedMs)
+      : deltaTime;
 
     this.elapsedMs += difficultyDt;
     this.clearTimer += deltaTime;
     if (spectating) this.spectateElapsedMs += deltaTime;
     // Chromium-style: nudge speed every frame toward MAX_SPEED.
-    // Spectate only accelerates a bit faster — never snap to a high floor.
     this.speed = stepSpeed(this.speed, speedDt);
 
     if (this.clearTimer > CLEAR_TIME_MS) {
@@ -319,11 +320,8 @@ export class RaceGame {
       const duckHeld = duckKey >= 0.45;
 
       if (this.jev.jumping) {
-        // Short hop is jump-then-duck; keep holding duck once min height is hit
-        // (or whenever the controller asks for duck mid-air).
-        const shortSlam =
-          this.jev.jumpProfile === "short" && this.jev.reachedMinHeight;
-        if (duckHeld || shortSlam) this.jev.setDuck(true);
+        // Short hop ducks only after the controller says the obstacle cleared.
+        if (duckHeld) this.jev.setDuck(true);
       } else if (duckHeld) {
         this.jev.setDuck(true);
       } else {
@@ -452,10 +450,6 @@ export class RaceGame {
       jevIoError: this.jevIoError,
       jevProfileStatus: this.jevProfileStatus,
       jevProfileError: this.jevProfileError,
-      spectateLeftMs:
-        this.phase === "spectating"
-          ? Math.max(0, SPECTATE_MS - this.spectateElapsedMs)
-          : 0,
     });
   }
 

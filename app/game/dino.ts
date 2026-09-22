@@ -28,10 +28,10 @@ export class Dino {
   jumping = false;
   ducking = false;
   speedDrop = false;
-  /** True when the current speed-drop came from a short-hop profile. */
+  /** True when the current speed-drop is a short-hop recovery slam. */
   shortHopDrop = false;
   reachedMinHeight = false;
-  /** short = jump then duck (speed-drop); full = full arc. */
+  /** short = stay airborne until cleared, then speed-drop; full = full arc. */
   jumpProfile: JumpProfile = "full";
   status: DinoStatus = "WAITING";
   crashed = false;
@@ -110,8 +110,9 @@ export class Dino {
   }
 
   /** Immediately cancel jump and slam down — no hover / slow-fall before crouch. */
-  setSpeedDrop() {
+  setSpeedDrop(fromShortHop = false) {
     this.speedDrop = true;
+    this.shortHopDrop = fromShortHop || this.jumpProfile === "short";
     // Chromium uses 1; that feels like a pause mid-air. Push harder so the
     // body drops in a few frames, then crouch on land.
     this.jumpVelocity = 8;
@@ -123,13 +124,8 @@ export class Dino {
 
     // Mid-air duck = fast fall, not crouch pose (still airborne).
     if (this.jumping) {
-      if (isDucking) {
-        if (this.jumpProfile === "short") this.shortHopDrop = true;
-        this.setSpeedDrop();
-      } else if (!this.shortHopDrop) {
-        // Do not cancel an in-flight short-hop slam when input releases duck.
-        this.speedDrop = false;
-      }
+      if (isDucking) this.setSpeedDrop(this.jumpProfile === "short");
+      else if (!this.shortHopDrop) this.speedDrop = false;
       return;
     }
 
@@ -187,11 +183,8 @@ export class Dino {
       if (this.yPos < this.minJumpHeight) {
         this.reachedMinHeight = true;
       }
-      // Short profile = jump then duck: slam down once min height is cleared.
-      if (this.jumpProfile === "short" && this.reachedMinHeight) {
-        this.shortHopDrop = true;
-        this.setSpeedDrop();
-      }
+      // Short profile stays in a normal arc until the controller ducks after
+      // the obstacle width has cleared (see obstacleClearedForShortDrop).
     }
 
     if (this.yPos > this.groundYPos) {

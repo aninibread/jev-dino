@@ -1,5 +1,6 @@
 import {
   buildJumpProfileQuestions,
+  buildJumpProfileState,
   buildManeuverQuestions,
   buildManeuverState,
   EMPTY_PROFILE_PROBABILITIES,
@@ -167,8 +168,7 @@ export function parseJumpProfileResponse(
     };
 
   const jump_profile = profile.choice as JumpProfile;
-  // Client applies maneuver-aware clamps (short hop only on single small cactus;
-  // short duck is allowed for brief stand-up before the next move).
+  // Client clamps: short jump only on single small cactus; short duck allowed.
   const profile_probabilities = parseDistribution(
     profile.block,
     PROFILES,
@@ -233,7 +233,7 @@ export async function decideJumpProfileWithJev(
   const result = await ai.run(
     "typesafe/jev",
     {
-      state: buildManeuverState(state),
+      state: buildJumpProfileState(state),
       questions: buildJumpProfileQuestions(),
     },
     {

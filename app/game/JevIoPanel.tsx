@@ -2,7 +2,6 @@ import { useEffect, useId, useRef, useState } from "react";
 import {
   EMPTY_PROBABILITIES,
   EMPTY_PROFILE_PROBABILITIES,
-  TIGHT_NEXT_SECONDS,
   labelFlightPath,
   labelGroup,
   labelKind,
@@ -177,52 +176,59 @@ export function JevIoPanel({
   active: boolean;
 }) {
   // Sticky bars so output never flashes empty between asks / while profile loads.
+  // Clear them when the race restarts (idle + no decision).
   const stickyProbs = useRef({ ...EMPTY_PROBABILITIES });
   const stickyProfileProbs = useRef({ ...EMPTY_PROFILE_PROBABILITIES });
   const stickyChosen = useRef<Maneuver | null>(null);
   const stickyChosenProfile = useRef<JumpProfile | null>(null);
 
-  const incomingProbs = decision?.probabilities;
-  if (
-    incomingProbs &&
-    (incomingProbs.jump ?? 0) +
-      (incomingProbs.duck ?? 0) +
-      (incomingProbs.keep_running ?? 0) >
-      0.01
-  ) {
-    stickyProbs.current = incomingProbs;
-    stickyChosen.current = decision?.action ?? null;
-  }
+  if (!decision && status === "idle" && profileStatus === "idle") {
+    stickyProbs.current = { ...EMPTY_PROBABILITIES };
+    stickyProfileProbs.current = { ...EMPTY_PROFILE_PROBABILITIES };
+    stickyChosen.current = null;
+    stickyChosenProfile.current = null;
+  } else {
+    const incomingProbs = decision?.probabilities;
+    if (
+      incomingProbs &&
+      (incomingProbs.jump ?? 0) +
+        (incomingProbs.duck ?? 0) +
+        (incomingProbs.keep_running ?? 0) >
+        0.01
+    ) {
+      stickyProbs.current = incomingProbs;
+      stickyChosen.current = decision?.action ?? null;
+    }
 
-  const incomingProfile = decision?.profile_probabilities;
-  if (
-    incomingProfile &&
-    (incomingProfile.short ?? 0) + (incomingProfile.full ?? 0) > 0.01
-  ) {
-    stickyProfileProbs.current = incomingProfile;
-    stickyChosenProfile.current =
-      decision?.action === "jump" || decision?.action === "duck"
-        ? decision.jump_profile
-        : stickyChosenProfile.current;
-  } else if (
-    decision?.action === "jump" ||
-    decision?.action === "duck"
-  ) {
-    stickyChosenProfile.current = decision.jump_profile;
+    const incomingProfile = decision?.profile_probabilities;
+    if (
+      incomingProfile &&
+      (incomingProfile.short ?? 0) + (incomingProfile.full ?? 0) > 0.01
+    ) {
+      stickyProfileProbs.current = incomingProfile;
+      stickyChosenProfile.current =
+        decision?.action === "jump" || decision?.action === "duck"
+          ? decision.jump_profile
+          : stickyChosenProfile.current;
+    } else if (
+      decision?.action === "jump" ||
+      decision?.action === "duck"
+    ) {
+      stickyChosenProfile.current = decision.jump_profile;
+    }
   }
 
   const probs = stickyProbs.current;
   const chosen = stickyChosen.current;
   const profileProbs = stickyProfileProbs.current;
   const chosenProfile = stickyChosenProfile.current;
-  const next = ask?.next_obstacle ?? null;
+  // UI shows only the immediate next obstacle; profile ask still gets up to two.
+  const next = ask?.next_obstacles?.[0] ?? null;
   const nextLabel = next
     ? `${labelKind(next.kind)} ${labelGroup(next.group)}`
     : "–";
   const gapLabel = next
-    ? `${next.gap_px}px / ${next.seconds_until_next.toFixed(2)}s${
-        next.seconds_until_next <= TIGHT_NEXT_SECONDS ? " tight" : ""
-      }`
+    ? `${next.gap_px}px / ${next.seconds_until_next.toFixed(2)}s`
     : "–";
 
   return (

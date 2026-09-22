@@ -7,16 +7,30 @@ export const BOTTOM_PAD = 10;
 export const GAME_DURATION_MS = 60_000;
 /**
  * After the player crashes, keep Jev running this long (wall-clock).
- * Spectate gently ramps acceleration so Jev / AI asks can keep up.
+ * Spectate eases acceleration up so speed climbs faster without a snap.
  */
-export const SPECTATE_MS = 12_000;
-/**
- * How much faster speed accelerates during spectate (vs normal race).
- * Keep this modest — a sudden spike makes plans late.
- */
-export const SPECTATE_ACCEL_MULT = 2.5;
+export const SPECTATE_MS = 30_000;
+/** Spectate accel multiplier at crash (near normal). */
+export const SPECTATE_ACCEL_MULT_START = 1.8;
+/** Spectate accel multiplier after the ease-in finishes. */
+export const SPECTATE_ACCEL_MULT_END = 5.5;
+/** Wall-clock ms to ease from start → end accel during spectate. */
+export const SPECTATE_ACCEL_RAMP_MS = 3_500;
 /** How much faster the difficulty/elapsed clock runs while spectating. */
-export const SPECTATE_ELAPSED_MULT = 1.6;
+export const SPECTATE_ELAPSED_MULT = 2.2;
+
+/** Ease-in accel multiplier for the watch-Jev window (smoothstep). */
+export function spectateAccelMult(spectateElapsedMs: number): number {
+  const t = Math.min(
+    1,
+    Math.max(0, spectateElapsedMs) / SPECTATE_ACCEL_RAMP_MS,
+  );
+  const s = t * t * (3 - 2 * t);
+  return (
+    SPECTATE_ACCEL_MULT_START +
+    (SPECTATE_ACCEL_MULT_END - SPECTATE_ACCEL_MULT_START) * s
+  );
+}
 
 /** Base Chromium speed; acceleration lives in speedCurve.ts. */
 export const BASE_SPEED = 6;
@@ -51,7 +65,7 @@ export const JEV_CLIENT_TIMEOUT_MS = JEV_ATTEMPT_TIMEOUT_MS * JEV_MAX_ATTEMPTS;
 /** Workers AI abort budget inside the decide handler (under one attempt). */
 export const JEV_SERVER_TIMEOUT_MS = 2_500;
 /**
- * Prefer waiting briefly for next_obstacle before the profile call, but never
+ * Prefer waiting briefly for next_obstacles before the profile call, but never
  * delay the maneuver ask. Maneuvers fire as soon as the obstacle is seen.
  */
 export const JEV_ASK_DEADLINE_SECONDS = 1.6;
