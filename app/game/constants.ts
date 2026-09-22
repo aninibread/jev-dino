@@ -5,8 +5,18 @@ export const LANE_GAP = 18;
 export const BOTTOM_PAD = 10;
 
 export const GAME_DURATION_MS = 60_000;
-/** After the player crashes, keep Jev running this long so you can watch. */
-export const SPECTATE_MS = 30_000;
+/**
+ * After the player crashes, keep Jev running this long (wall-clock).
+ * Spectate uses a boosted speed ramp + difficulty clock so the level
+ * packs a late-race stretch into a short watch window.
+ */
+export const SPECTATE_MS = 12_000;
+/** Floor speed once you're watching — skip the slow early crawl. */
+export const SPECTATE_MIN_SPEED = 10;
+/** How much faster speed accelerates during spectate (vs normal race). */
+export const SPECTATE_ACCEL_MULT = 14;
+/** How much faster the difficulty/elapsed clock runs while spectating. */
+export const SPECTATE_ELAPSED_MULT = 3;
 
 /** Base Chromium speed; acceleration lives in speedCurve.ts. */
 export const BASE_SPEED = 6;

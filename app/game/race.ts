@@ -5,13 +5,16 @@ import {
   GAME_DURATION_MS,
   LANE_GAP,
   LANE_HEIGHT,
+  SPECTATE_ACCEL_MULT,
+  SPECTATE_ELAPSED_MULT,
+  SPECTATE_MIN_SPEED,
   SPECTATE_MS,
 } from "./constants";
 import { Dino } from "./dino";
 import { CloudField, HorizonLine } from "./horizon";
 import { JevController, type JevSnapshot } from "./jevController";
 import { ObstacleManager } from "./obstacles";
-import { stepSpeed } from "./speedCurve";
+import { MAX_SPEED, stepSpeed } from "./speedCurve";
 import type { DecideResponse, DinosaurMotion } from "../lib/jev-contract";
 
 export type RacePhase = "idle" | "playing" | "spectating" | "ended";
@@ -249,11 +252,23 @@ export class RaceGame {
   private update(deltaTime: number) {
     if (!this.live) return;
 
-    this.elapsedMs += deltaTime;
+    const spectating = this.phase === "spectating";
+    // After you crash, pack late-race difficulty into a short watch window.
+    // Boost speed + difficulty clock only — dino physics stay on real deltaTime
+    // so jump arcs still look right; proximity timing uses the higher speed.
+    const difficultyDt = spectating
+      ? deltaTime * SPECTATE_ELAPSED_MULT
+      : deltaTime;
+    const speedDt = spectating ? deltaTime * SPECTATE_ACCEL_MULT : deltaTime;
+
+    this.elapsedMs += difficultyDt;
     this.clearTimer += deltaTime;
-    if (this.phase === "spectating") this.spectateElapsedMs += deltaTime;
+    if (spectating) this.spectateElapsedMs += deltaTime;
     // Chromium-style: nudge speed every frame toward MAX_SPEED.
-    this.speed = stepSpeed(this.speed, deltaTime);
+    this.speed = stepSpeed(this.speed, speedDt);
+    if (spectating) {
+      this.speed = Math.min(MAX_SPEED, Math.max(this.speed, SPECTATE_MIN_SPEED));
+    }
 
     if (this.clearTimer > CLEAR_TIME_MS) {
       this.obstacles.update(deltaTime, this.speed, this.elapsedMs);
@@ -319,6 +334,8 @@ export class RaceGame {
     this.winner = "jev";
     this.spectateElapsedMs = 0;
     this.duckHeld = false;
+    // Skip the early crawl — jump straight into a fast showcase stretch.
+    this.speed = Math.min(MAX_SPEED, Math.max(this.speed, SPECTATE_MIN_SPEED));
     this.captureYouLane();
     this.emit();
   }
