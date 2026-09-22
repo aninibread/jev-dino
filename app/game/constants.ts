@@ -7,16 +7,16 @@ export const BOTTOM_PAD = 10;
 export const GAME_DURATION_MS = 60_000;
 /**
  * After the player crashes, keep Jev running this long (wall-clock).
- * Spectate uses a boosted speed ramp + difficulty clock so the level
- * packs a late-race stretch into a short watch window.
+ * Spectate gently ramps acceleration so Jev / AI asks can keep up.
  */
 export const SPECTATE_MS = 12_000;
-/** Floor speed once you're watching — skip the slow early crawl. */
-export const SPECTATE_MIN_SPEED = 10;
-/** How much faster speed accelerates during spectate (vs normal race). */
-export const SPECTATE_ACCEL_MULT = 14;
+/**
+ * How much faster speed accelerates during spectate (vs normal race).
+ * Keep this modest — a sudden spike makes plans late.
+ */
+export const SPECTATE_ACCEL_MULT = 2.5;
 /** How much faster the difficulty/elapsed clock runs while spectating. */
-export const SPECTATE_ELAPSED_MULT = 3;
+export const SPECTATE_ELAPSED_MULT = 1.6;
 
 /** Base Chromium speed; acceleration lives in speedCurve.ts. */
 export const BASE_SPEED = 6;
@@ -30,16 +30,29 @@ export const CLEAR_TIME_MS = 4000;
  * obstacle reaches the visible canvas. Jev is asked as soon as the obstacle is
  * created, so this is the main lever for Workers AI latency.
  */
-export const JEV_ASK_LEAD_SECONDS = 3.5;
-/** Max obstacles waiting off-screen (keeps the decide queue from stampeding AI). */
-export const JEV_MAX_OFFSCREEN = 3;
-/** Browser fetch budget for /api/jev-decide (must exceed server AI timeout). */
-export const JEV_CLIENT_TIMEOUT_MS = 8_000;
-/** Workers AI abort budget inside the decide handler. */
-export const JEV_SERVER_TIMEOUT_MS = 7_000;
+export const JEV_ASK_LEAD_SECONDS = 4.0;
+/** Max obstacles waiting off-screen (feeds the prefetch decide pool). */
+export const JEV_MAX_OFFSCREEN = 5;
 /**
- * If the next obstacle is still unknown, wait to ask until this many seconds
- * remain before the action proximity threshold — then ask with next=null.
+ * Max concurrent browser→Worker Jev fetches (maneuver + profile share this).
+ * Each obstacle fires both asks in parallel, so keep this high enough to
+ * prefetch the off-screen queue without stampeding.
+ */
+export const JEV_MAX_IN_FLIGHT = 8;
+/**
+ * Per-attempt browser fetch budget. On timeout/failure we retry immediately
+ * up to JEV_MAX_ATTEMPTS instead of waiting out a long single request.
+ */
+export const JEV_ATTEMPT_TIMEOUT_MS = 2_800;
+/** Total tries per ask (1 initial + retries). */
+export const JEV_MAX_ATTEMPTS = 3;
+/** @deprecated Prefer JEV_ATTEMPT_TIMEOUT_MS; kept for any external refs. */
+export const JEV_CLIENT_TIMEOUT_MS = JEV_ATTEMPT_TIMEOUT_MS * JEV_MAX_ATTEMPTS;
+/** Workers AI abort budget inside the decide handler (under one attempt). */
+export const JEV_SERVER_TIMEOUT_MS = 2_500;
+/**
+ * Prefer waiting briefly for next_obstacle before the profile call, but never
+ * delay the maneuver ask. Maneuvers fire as soon as the obstacle is seen.
  */
 export const JEV_ASK_DEADLINE_SECONDS = 1.6;
 

@@ -1,23 +1,34 @@
 import {
   BASE_SPEED,
   JEV_ASK_DEADLINE_SECONDS,
-  JEV_CLIENT_TIMEOUT_MS,
+  JEV_ATTEMPT_TIMEOUT_MS,
+  JEV_MAX_ATTEMPTS,
+  JEV_MAX_IN_FLIGHT,
 } from "./constants";
 import {
   CONFIDENCE_THRESHOLD,
   EMPTY_PROBABILITIES,
   EMPTY_PROFILE_PROBABILITIES,
+  TIGHT_NEXT_SECONDS,
+  ULTRA_TIGHT_SECONDS,
   birdAltitude,
   flightPathFor,
+  shortRecoveryAllowed,
   toGroup,
   toSemanticKind,
+  type BirdAltitude,
   type DecideResponse,
   type DinosaurMotion,
+  type FlightPath,
   type JevAskView,
   type JumpProfile,
   type JumpProfileProbabilities,
+  type ObstacleGroup,
+  type ObstacleKind,
+  type SemanticKind,
 } from "../lib/jev-contract";
 import { calculateActionProximityThreshold } from "../lib/timing";
+import { predictSpeed } from "./speedCurve";
 import type { Obstacle } from "./obstacles";
 import { logJevAct, logJevAsk, logJevReply } from "./jevLog";
 
@@ -40,9 +51,11 @@ export type JevIoStatus =
 
 export type JevIoView = {
   status: JevIoStatus;
+  profileStatus: JevIoStatus;
   ask: JevAskView | null;
   decision: DecideResponse | null;
   error?: string | null;
+  profileError?: string | null;
 };
 
 export type JevControllerOptions = {
@@ -66,62 +79,77 @@ type Plan = {
   status: PlanStatus;
   abort: AbortController;
   requestedAt: number;
+  /** Maneuver body; next_obstacle may be refreshed for the profile call. */
+  body: DecideBody;
   decision?: DecideResponse & { effectiveJumpProfile: JumpProfile };
+  maneuverDurationMs?: number;
+  maneuverError?: string | null;
+  /** Profile result if it arrived before (or after) the maneuver. */
+  profileResult?: {
+    jump_profile: JumpProfile;
+    profile_probabilities: JumpProfileProbabilities;
+    durationMs: number;
+  };
+  profileError?: string | null;
+  /** Profile fetch already queued / finished for this plan. */
+  profileQueued?: boolean;
+};
+
+type DescribedObstacle = {
+  id: string;
+  type: ObstacleKind;
+  size: number;
+  width: number;
+  y: number;
+  bird_altitude?: BirdAltitude;
+  kind: SemanticKind;
+  group: ObstacleGroup;
+  flight_path: FlightPath;
+  width_px: number;
 };
 
 type DecideBody = {
   speed: number;
+  predicted_speed?: number;
   dinosaur_motion: DinosaurMotion;
-  obstacle: {
-    id: string;
-    type: string;
-    size: number;
-    width: number;
-    y: number;
-    bird_altitude?: string;
-    kind: string;
-    group: string;
-    flight_path: string;
-    width_px: number;
-  };
-  next_obstacle: {
-    id: string;
-    type: string;
-    size: number;
-    width: number;
-    y: number;
-    bird_altitude?: string;
-    kind: string;
-    group: string;
-    flight_path: string;
-    width_px: number;
+  obstacle: DescribedObstacle;
+  next_obstacle: (DescribedObstacle & {
     gap_px: number;
     seconds_until_next: number;
-  } | null;
+  }) | null;
+  chosen_maneuver?: DecideResponse["action"] | null;
 };
 
 /**
- * Per-obstacle planner (joshlarsen/jev-t-rex-runner style):
- * ask Jev once when an obstacle appears; code owns proximity timing + duck hold.
- * Decides are serialized so Workers AI is not stampeded.
+ * Per-obstacle planner with a FIFO plan queue:
+ * - Each obstacle gets a plan that holds its ask + replies until that obstacle
+ *   is cleared (then it is popped).
+ * - Completing a later request never replaces the active (head) plan's I/O.
+ * - Execution always reads the decision stored on that obstacle's plan.
  */
 export class JevController {
   private frameHook: number | null = null;
   private seen = new Set<string>();
-  /** Seen but not asked yet — wait for next_obstacle when possible. */
-  private awaitingAsk = new Set<string>();
+  /** Seen; waiting to fire profile once next (or deadline) is known. */
+  private awaitingProfile = new Set<string>();
   private plans = new Map<string, Plan>();
+  /** Spawn order — head is the obstacle Jev is currently working. */
+  private planOrder: string[] = [];
   private lastAction: "run" | "jump" | "duck" = "run";
   private lastDecision: DecideResponse | null = null;
   private lastAsk: JevAskView | null = null;
   private lastStatus: JevIoStatus = "idle";
   private lastError: string | null = null;
+  private lastProfileStatus: JevIoStatus = "idle";
+  private lastProfileError: string | null = null;
   private pressJump = 0;
   private pressDuck = 0;
   private jumpProfile: JumpProfile = "full";
+  /** After a short jump, hold duck mid-air until we land. */
+  private shortHopActive = false;
   private options: JevControllerOptions;
   private decideQueue: Array<() => Promise<void>> = [];
-  private decideBusy = false;
+  private inFlight = 0;
   running = false;
 
   constructor(options: JevControllerOptions) {
@@ -157,39 +185,124 @@ export class JevController {
     ask = this.lastAsk,
     decision = this.lastDecision,
     error: string | null = null,
+    profileStatus = this.lastProfileStatus,
+    profileError: string | null = this.lastProfileError,
   ) {
     this.lastStatus = status;
     this.lastError = status === "error" ? error : null;
+    this.lastProfileStatus = profileStatus;
+    this.lastProfileError =
+      profileStatus === "error" ? profileError : null;
+    if (ask) this.lastAsk = ask;
+    if (decision) this.lastDecision = decision;
     this.options.onIo({
       status,
+      profileStatus,
       ask,
       decision,
       error: this.lastError,
+      profileError: this.lastProfileError,
     });
+  }
+
+  /** Front of the FIFO plan queue (next obstacle still in play). */
+  private activePlan(): Plan | null {
+    while (this.planOrder.length > 0) {
+      const id = this.planOrder[0]!;
+      const plan = this.plans.get(id);
+      if (!plan) {
+        this.planOrder.shift();
+        continue;
+      }
+      return plan;
+    }
+    return null;
+  }
+
+  /**
+   * Publish I/O for the queue head only. Later replies stay on their plan
+   * until that plan becomes the head.
+   */
+  private publishActiveIo() {
+    const plan = this.activePlan();
+    if (!plan) {
+      this.emitIo("idle", this.lastAsk, this.lastDecision, null, "idle", null);
+      return;
+    }
+
+    let status: JevIoStatus = "idle";
+    if (plan.status === "pending") status = "thinking";
+    else if (
+      plan.status === "ready" ||
+      plan.status === "ducking" ||
+      plan.status === "executed"
+    ) {
+      status = "ready";
+    } else if (plan.status === "skipped") status = "skipped";
+    else if (plan.status === "late") status = "late";
+    else if (plan.status === "error") status = "error";
+
+    let profileStatus: JevIoStatus = "idle";
+    if (plan.profileError) {
+      profileStatus = "error";
+    } else if (plan.profileResult) {
+      profileStatus = "ready";
+    } else if (
+      plan.profileQueued &&
+      plan.status !== "late" &&
+      plan.status !== "skipped" &&
+      plan.status !== "error"
+    ) {
+      profileStatus = "thinking";
+    }
+
+    this.emitIo(
+      status,
+      plan.ask,
+      plan.decision ?? this.lastDecision,
+      plan.maneuverError ?? null,
+      profileStatus,
+      plan.profileError ?? null,
+    );
+  }
+
+  /** Obstacle cleared — drop its plan and surface the next queued one. */
+  private retirePlan(id: string) {
+    const plan = this.plans.get(id);
+    if (plan && plan.status === "pending") plan.abort.abort();
+    this.plans.delete(id);
+    this.awaitingProfile.delete(id);
+    const idx = this.planOrder.indexOf(id);
+    if (idx >= 0) this.planOrder.splice(idx, 1);
+    this.publishActiveIo();
   }
 
   start() {
     this.stop();
     this.running = true;
     this.seen.clear();
-    this.awaitingAsk.clear();
+    this.awaitingProfile.clear();
     this.plans.clear();
+    this.planOrder = [];
     this.decideQueue = [];
-    this.decideBusy = false;
+    this.inFlight = 0;
     this.lastAction = "run";
     this.lastDecision = null;
     this.lastAsk = null;
     this.lastStatus = "idle";
     this.lastError = null;
+    this.lastProfileStatus = "idle";
+    this.lastProfileError = null;
     this.pressJump = 0;
     this.pressDuck = 0;
     this.jumpProfile = "full";
+    this.shortHopActive = false;
     console.log(
-      "%c[Jev]%c per-obstacle maneuvers; serial decides; code owns timing",
+      `%c[Jev]%c FIFO plan queue; max ${JEV_MAX_IN_FLIGHT} fetches in flight`,
       "color:#0a7;font-weight:700",
       "color:inherit",
     );
-    this.emitIo("idle", null, null);
+    this.emitIo("idle", null, null, null, "idle", null);
     const tick = () => {
       if (!this.running) return;
       this.onFrame();
@@ -203,33 +316,41 @@ export class JevController {
     if (this.frameHook) cancelAnimationFrame(this.frameHook);
     this.frameHook = null;
     this.decideQueue = [];
-    this.decideBusy = false;
+    this.inFlight = 0;
     for (const plan of this.plans.values()) plan.abort.abort();
     this.plans.clear();
+    this.planOrder = [];
     this.seen.clear();
-    this.awaitingAsk.clear();
+    this.awaitingProfile.clear();
     this.pressJump = 0;
     this.pressDuck = 0;
+    this.shortHopActive = false;
   }
 
-  private enqueueDecide(task: () => Promise<void>) {
+  /** Queue a Worker fetch; pump keeps up to JEV_MAX_IN_FLIGHT running. */
+  private enqueueFetch(task: () => Promise<void>) {
     this.decideQueue.push(task);
-    void this.pumpDecideQueue();
+    this.pumpFetchQueue();
   }
 
-  private async pumpDecideQueue() {
-    if (this.decideBusy) return;
-    this.decideBusy = true;
-    while (this.running && this.decideQueue.length > 0) {
+  private pumpFetchQueue() {
+    while (
+      this.running &&
+      this.inFlight < JEV_MAX_IN_FLIGHT &&
+      this.decideQueue.length > 0
+    ) {
       const task = this.decideQueue.shift();
       if (!task) break;
-      try {
-        await task();
-      } catch {
-        /* Individual tasks handle their own failures. */
-      }
+      this.inFlight += 1;
+      void task()
+        .catch(() => {
+          /* Tasks handle their own failures. */
+        })
+        .finally(() => {
+          this.inFlight = Math.max(0, this.inFlight - 1);
+          this.pumpFetchQueue();
+        });
     }
-    this.decideBusy = false;
   }
 
   private onFrame() {
@@ -240,50 +361,63 @@ export class JevController {
       return;
     }
     this.observeObstacles(snapshot);
+    this.flushProfileAsks(snapshot);
     this.executePlans(snapshot);
   }
 
   private observeObstacles(snapshot: JevSnapshot) {
+    // Maneuver asks fire immediately. Profile waits for next context.
     for (const obstacle of snapshot.obstacles) {
       if (obstacle.remove || this.seen.has(obstacle.id)) continue;
       this.seen.add(obstacle.id);
-      this.awaitingAsk.add(obstacle.id);
+      this.queueDecision(obstacle, snapshot);
     }
+  }
 
-    for (const id of [...this.awaitingAsk]) {
-      const obstacle = snapshot.obstacles.find((o) => o.id === id);
-      if (!obstacle || obstacle.remove) {
-        this.awaitingAsk.delete(id);
+  /**
+   * Fire profile as soon as next_obstacle is known (or the ask deadline hits),
+   * so Jev sees tight chains instead of always defaulting to full.
+   */
+  private flushProfileAsks(snapshot: JevSnapshot) {
+    for (const id of [...this.awaitingProfile]) {
+      const plan = this.plans.get(id);
+      if (!plan || plan.profileQueued) {
+        this.awaitingProfile.delete(id);
         continue;
       }
-      if (this.plans.has(id)) {
-        this.awaitingAsk.delete(id);
+      if (
+        plan.status === "late" ||
+        plan.status === "skipped" ||
+        plan.status === "error" ||
+        plan.status === "executed"
+      ) {
+        this.awaitingProfile.delete(id);
         continue;
       }
 
+      const obstacle = snapshot.obstacles.find((o) => o.id === id) ?? plan.obstacle;
       const next = this.findNextObstacle(obstacle, snapshot);
       const threshold = calculateActionProximityThreshold({
         baseSpeed: BASE_SPEED,
         currentSpeed: snapshot.speed,
         dinosaurX: snapshot.dinosaurX,
         obstacleWidth: obstacle.width,
-        action: "jump",
+        action: plan.decision?.action ?? "jump",
         jumpProfile: "full",
       });
       const pxPerSec = Math.max(snapshot.speed, 0.1) * 60;
       const secondsToAct = Math.max(0, (obstacle.xPos - threshold) / pxPerSec);
-      // Wait for a follow-up obstacle when we still have lead time, so jump
-      // profile can see tight chains. Ask anyway once the deadline hits.
+      // Prefer waiting for next; fire anyway near the action deadline.
       if (!next && secondsToAct > JEV_ASK_DEADLINE_SECONDS) {
         continue;
       }
 
-      this.awaitingAsk.delete(id);
-      this.queueDecision(obstacle, snapshot);
+      this.awaitingProfile.delete(id);
+      this.queueJumpProfile(plan);
     }
   }
 
-  private describeObstacle(obstacle: Obstacle) {
+  private describeObstacle(obstacle: Obstacle): DescribedObstacle {
     const type = obstacle.typeConfig.kind;
     const alt = type === "bird" ? birdAltitude(obstacle.yPos) : undefined;
     return {
@@ -325,17 +459,34 @@ export class JevController {
     };
   }
 
+  private buildNextDescribed(
+    obstacle: Obstacle,
+    snapshot: JevSnapshot,
+  ): DecideBody["next_obstacle"] {
+    const next = this.findNextObstacle(obstacle, snapshot);
+    if (!next) return null;
+    return {
+      ...this.describeObstacle(next.obstacle),
+      gap_px: next.gap_px,
+      seconds_until_next: next.seconds_until_next,
+    };
+  }
+
   private queueDecision(obstacle: Obstacle, snapshot: JevSnapshot) {
     const abort = new AbortController();
     const described = this.describeObstacle(obstacle);
-    const next = this.findNextObstacle(obstacle, snapshot);
-    const nextDescribed = next
-      ? {
-          ...this.describeObstacle(next.obstacle),
-          gap_px: next.gap_px,
-          seconds_until_next: next.seconds_until_next,
-        }
-      : null;
+    const nextDescribed = this.buildNextDescribed(obstacle, snapshot);
+    const threshold = calculateActionProximityThreshold({
+      baseSpeed: BASE_SPEED,
+      currentSpeed: snapshot.speed,
+      dinosaurX: snapshot.dinosaurX,
+      obstacleWidth: obstacle.width,
+      action: "jump",
+      jumpProfile: "full",
+    });
+    const pxPerSec = Math.max(snapshot.speed, 0.1) * 60;
+    const secondsToAct = Math.max(0, (obstacle.xPos - threshold) / pxPerSec);
+    const predicted_speed = predictSpeed(snapshot.speed, secondsToAct * 1000);
 
     const ask: JevAskView = {
       speed: snapshot.speed,
@@ -363,34 +514,43 @@ export class JevController {
           }
         : null,
     };
+    const body: DecideBody = {
+      speed: ask.speed,
+      predicted_speed,
+      dinosaur_motion: ask.dinosaur_motion,
+      obstacle: described,
+      next_obstacle: nextDescribed,
+    };
     const plan: Plan = {
       obstacleId: obstacle.id,
       obstacle,
       ask,
+      body,
       status: "pending",
       abort,
       requestedAt: performance.now(),
     };
     this.plans.set(obstacle.id, plan);
-    this.lastAsk = ask;
-    this.emitIo("thinking", ask, null);
+    this.planOrder.push(obstacle.id);
+    this.awaitingProfile.add(obstacle.id);
+    // Head of queue drives the panel — later asks stay parked on their plan.
+    this.publishActiveIo();
+    console.log(
+      `%c[Jev]%c enqueue ${obstacle.id} (queue ${this.planOrder.length})`,
+      "color:#0a7;font-weight:600",
+      "color:inherit",
+    );
 
-    const body: DecideBody = {
-      speed: ask.speed,
-      dinosaur_motion: ask.dinosaur_motion,
-      obstacle: described,
-      next_obstacle: nextDescribed,
-    };
-
-    this.enqueueDecide(async () => {
+    // Maneuver immediately; profile flushes once next (or deadline) is ready.
+    this.enqueueFetch(async () => {
       if (!this.running || this.plans.get(obstacle.id) !== plan) return;
       if (plan.status !== "pending") return;
       logJevAsk(body);
-      await this.fetchDecision(plan, ask, body);
+      await this.fetchManeuver(plan, ask, body);
     });
   }
 
-  private async fetchDecision(
+  private async fetchManeuver(
     plan: Plan,
     ask: JevAskView,
     body: DecideBody,
@@ -403,7 +563,7 @@ export class JevController {
         body: JSON.stringify(body),
         signal: AbortSignal.any([
           plan.abort.signal,
-          AbortSignal.timeout(JEV_CLIENT_TIMEOUT_MS),
+          AbortSignal.timeout(JEV_ATTEMPT_TIMEOUT_MS),
         ]),
       });
       if (!response.ok) throw new Error(`decide failed (${response.status})`);
@@ -413,87 +573,41 @@ export class JevController {
         return;
       }
 
-      let jump_profile: JumpProfile = "full";
-      let profile_probabilities: JumpProfileProbabilities = {
-        ...EMPTY_PROFILE_PROBABILITIES,
-      };
-      let profileMs = 0;
-
-      // Second sequential call: jump profile only when the maneuver is jump.
+      // Soft server failure — retry while attempts remain instead of skipping.
       if (
-        decision.source !== "none" &&
-        decision.confidence >= CONFIDENCE_THRESHOLD &&
-        decision.action === "jump"
+        (decision.source === "none" ||
+          decision.confidence < CONFIDENCE_THRESHOLD) &&
+        attempt + 1 < JEV_MAX_ATTEMPTS
       ) {
-        // Show maneuver bars while the profile ask is in flight.
-        const partial: DecideResponse & { effectiveJumpProfile: JumpProfile } = {
-          ...decision,
-          jump_profile: "full",
-          profile_probabilities,
-          probabilities: decision.probabilities ?? {
-            ...EMPTY_PROBABILITIES,
-            [decision.action]: decision.confidence,
-          },
-          effectiveJumpProfile: "full",
-          durationMs:
-            decision.durationMs ?? performance.now() - plan.requestedAt,
-        };
-        this.lastAsk = ask;
-        this.lastDecision = partial;
-        this.emitIo("thinking", ask, partial);
-
-        const profileResult = await this.fetchJumpProfile(plan, body);
-        if (!this.running) return;
-        if (
-          this.plans.get(plan.obstacleId) !== plan ||
-          plan.status !== "pending"
-        ) {
-          return;
-        }
-        if (profileResult) {
-          jump_profile = profileResult.jump_profile;
-          profile_probabilities = profileResult.profile_probabilities;
-          profileMs = profileResult.durationMs;
-        }
+        throw new Error(
+          decision.source === "none"
+            ? "empty Jev response"
+            : "low confidence",
+        );
       }
-
-      const shortOk =
-        ask.obstacle.kind === "small_cactus" &&
-        ask.obstacle.group === "single";
-      const effectiveJumpProfile: JumpProfile =
-        decision.action === "jump" &&
-        jump_profile === "short" &&
-        shortOk
-          ? "short"
-          : "full";
 
       const enriched: DecideResponse & { effectiveJumpProfile: JumpProfile } = {
         ...decision,
-        jump_profile: effectiveJumpProfile,
-        profile_probabilities:
-          decision.action === "jump"
-            ? profile_probabilities
-            : { ...EMPTY_PROFILE_PROBABILITIES },
+        jump_profile: "full",
+        profile_probabilities: { ...EMPTY_PROFILE_PROBABILITIES },
         probabilities: decision.probabilities ?? {
           ...EMPTY_PROBABILITIES,
           [decision.action]: decision.confidence,
         },
-        effectiveJumpProfile,
-        durationMs:
-          (decision.durationMs ?? performance.now() - plan.requestedAt) +
-          profileMs,
+        effectiveJumpProfile: "full",
+        durationMs: decision.durationMs ?? performance.now() - plan.requestedAt,
       };
       plan.decision = enriched;
-      this.lastAsk = ask;
-      this.lastDecision = enriched;
-      logJevReply(enriched, body);
+      plan.maneuverDurationMs = enriched.durationMs;
+      plan.maneuverError = null;
 
       if (
         decision.source === "none" ||
         decision.confidence < CONFIDENCE_THRESHOLD
       ) {
         plan.status = "skipped";
-        this.emitIo("skipped", ask, enriched);
+        logJevReply(enriched, body);
+        this.publishActiveIo();
         console.log(
           "%c[Jev]%c skipped (low confidence or error) %s",
           "color:#666;font-weight:600",
@@ -503,51 +617,194 @@ export class JevController {
         return;
       }
 
+      // Maneuver is enough to act. Merge profile if it already returned.
       plan.status = "ready";
-      this.emitIo("ready", ask, enriched);
+      this.mergeProfileIntoDecision(plan);
+      logJevReply(plan.decision!, body);
+      this.publishActiveIo();
     } catch (error) {
       if (!this.running) return;
       if (this.plans.get(plan.obstacleId) !== plan) return;
       if (plan.status !== "pending") return;
-
-      // Plan was cancelled because the obstacle arrived (late) or race ended.
+      // Plan cancelled (late / race end) — do not retry.
       if (plan.abort.signal.aborted) return;
 
-      const canRetry = attempt < 1;
-      if (canRetry) {
+      if (attempt + 1 < JEV_MAX_ATTEMPTS) {
         console.log(
-          "%c[Jev]%c retrying %s (%s)",
+          `%c[Jev]%c retry maneuver ${attempt + 2}/${JEV_MAX_ATTEMPTS} %s (%s)`,
           "color:#c60;font-weight:600",
           "color:inherit",
           plan.obstacleId,
           error instanceof Error ? error.message : "request failed",
         );
-        await this.fetchDecision(plan, ask, body, attempt + 1);
+        await this.fetchManeuver(plan, ask, body, attempt + 1);
         return;
       }
 
       plan.status = "error";
-      const message =
+      plan.maneuverError =
         error instanceof Error ? error.message : "request failed";
-      this.emitIo("error", ask, this.lastDecision, message);
+      this.publishActiveIo();
       console.log(
-        "%c[Jev reply]%c (request failed) %s",
+        "%c[Jev reply]%c (request failed after retries) %s",
         "color:#666;font-weight:600",
         "color:inherit",
-        message,
+        plan.maneuverError,
       );
     }
   }
 
-  private async fetchJumpProfile(
-    plan: Plan,
-    body: DecideBody,
-    attempt = 0,
-  ): Promise<{
-    jump_profile: JumpProfile;
-    profile_probabilities: JumpProfileProbabilities;
-    durationMs: number;
-  } | null> {
+  private queueJumpProfile(plan: Plan) {
+    if (plan.profileQueued) return;
+    plan.profileQueued = true;
+    plan.profileError = null;
+    this.publishActiveIo();
+    this.enqueueFetch(async () => {
+      if (!this.running || this.plans.get(plan.obstacleId) !== plan) return;
+      if (
+        plan.status === "late" ||
+        plan.status === "skipped" ||
+        plan.status === "error"
+      ) {
+        this.publishActiveIo();
+        return;
+      }
+      await this.fetchJumpProfile(plan);
+    });
+  }
+
+  /** Map raw profile + maneuver into an allowed short/full recovery. */
+  private effectiveProfileFor(
+    action: DecideResponse["action"],
+    ask: JevAskView,
+    raw: JumpProfile,
+    probs: JumpProfileProbabilities,
+  ): JumpProfile {
+    if (!shortRecoveryAllowed(action, ask.obstacle)) return "full";
+
+    const next = ask.next_obstacle;
+    if (!next) return raw === "short" ? "short" : "full";
+
+    // Extremely tight stacks at speed: one full hop often clears both;
+    // a short hop lands in the gap and fails.
+    if (
+      action === "jump" &&
+      next.seconds_until_next <= ULTRA_TIGHT_SECONDS
+    ) {
+      return "full";
+    }
+
+    const tight = next.seconds_until_next <= TIGHT_NEXT_SECONDS;
+
+    // Moderately tight chains: prefer short so we are neutral for the next move.
+    if (tight) {
+      if (raw === "short") return "short";
+      if ((probs.short ?? 0) >= 0.3) return "short";
+      if ((probs.full ?? 0) < 0.7) return "short";
+      return "full";
+    }
+
+    return raw === "short" ? "short" : "full";
+  }
+
+  private mergeProfileIntoDecision(plan: Plan): void {
+    if (!plan.decision) return;
+    const action = plan.decision.action;
+    if (action === "keep_running") {
+      plan.decision = {
+        ...plan.decision,
+        jump_profile: "full",
+        profile_probabilities: { ...EMPTY_PROFILE_PROBABILITIES },
+        effectiveJumpProfile: "full",
+      };
+      return;
+    }
+
+    const raw = plan.profileResult;
+    if (!raw) {
+      // Still waiting — for moderately tight eligible chains, act short already.
+      // Ultra-tight jumps stay full (clear both / avoid landing in the gap).
+      const next = plan.ask.next_obstacle;
+      const ultra =
+        !!next &&
+        action === "jump" &&
+        next.seconds_until_next <= ULTRA_TIGHT_SECONDS;
+      const tight =
+        !!next &&
+        !ultra &&
+        next.seconds_until_next <= TIGHT_NEXT_SECONDS;
+      const earlyShort =
+        tight && shortRecoveryAllowed(action, plan.ask.obstacle);
+      plan.decision = {
+        ...plan.decision,
+        jump_profile: earlyShort ? "short" : "full",
+        profile_probabilities: { ...EMPTY_PROFILE_PROBABILITIES },
+        effectiveJumpProfile: earlyShort ? "short" : "full",
+      };
+      return;
+    }
+
+    const effectiveJumpProfile = this.effectiveProfileFor(
+      action,
+      plan.ask,
+      raw.jump_profile,
+      raw.profile_probabilities,
+    );
+    plan.decision = {
+      ...plan.decision,
+      jump_profile: effectiveJumpProfile,
+      profile_probabilities: raw.profile_probabilities,
+      effectiveJumpProfile,
+      durationMs:
+        (plan.maneuverDurationMs ?? plan.decision.durationMs) + raw.durationMs,
+    };
+  }
+
+  private async fetchJumpProfile(plan: Plan, attempt = 0): Promise<void> {
+    // Refresh next + pass chosen_maneuver so Jev can prefer short on chains.
+    const snapshot = this.options.getSnapshot();
+    const nextDescribed = snapshot
+      ? this.buildNextDescribed(plan.obstacle, snapshot)
+      : plan.body.next_obstacle;
+    const liveSpeed = snapshot?.speed ?? plan.body.speed;
+    const threshold = calculateActionProximityThreshold({
+      baseSpeed: BASE_SPEED,
+      currentSpeed: liveSpeed,
+      dinosaurX: snapshot?.dinosaurX ?? 0,
+      obstacleWidth: plan.obstacle.width,
+      action: plan.decision?.action ?? "jump",
+      jumpProfile: plan.decision?.effectiveJumpProfile ?? "full",
+    });
+    const pxPerSec = Math.max(liveSpeed, 0.1) * 60;
+    const secondsToAct = Math.max(
+      0,
+      (plan.obstacle.xPos - threshold) / pxPerSec,
+    );
+    const body: DecideBody = {
+      ...plan.body,
+      speed: liveSpeed,
+      predicted_speed: predictSpeed(liveSpeed, secondsToAct * 1000),
+      next_obstacle: nextDescribed,
+      chosen_maneuver: plan.decision?.action ?? null,
+    };
+    if (body.next_obstacle) {
+      const n = body.next_obstacle;
+      plan.ask = {
+        ...plan.ask,
+        next_obstacle: {
+          id: n.id,
+          type: n.type,
+          bird_altitude: n.bird_altitude,
+          kind: n.kind,
+          group: n.group,
+          flight_path: n.flight_path,
+          width_px: n.width_px,
+          gap_px: n.gap_px,
+          seconds_until_next: n.seconds_until_next,
+        },
+      };
+    }
+
     try {
       const response = await fetch("/api/jev-jump-profile", {
         method: "POST",
@@ -555,7 +812,7 @@ export class JevController {
         body: JSON.stringify(body),
         signal: AbortSignal.any([
           plan.abort.signal,
-          AbortSignal.timeout(JEV_CLIENT_TIMEOUT_MS),
+          AbortSignal.timeout(JEV_ATTEMPT_TIMEOUT_MS),
         ]),
       });
       if (!response.ok) {
@@ -567,7 +824,14 @@ export class JevController {
         durationMs?: number;
         source?: string;
       };
-      return {
+      if (!this.running) return;
+      if (this.plans.get(plan.obstacleId) !== plan) return;
+
+      if (result.source === "none" && attempt + 1 < JEV_MAX_ATTEMPTS) {
+        throw new Error("empty profile response");
+      }
+
+      plan.profileResult = {
         jump_profile: result.jump_profile === "short" ? "short" : "full",
         profile_probabilities: result.profile_probabilities ?? {
           short: 0,
@@ -575,45 +839,83 @@ export class JevController {
         },
         durationMs: result.durationMs ?? 0,
       };
+      plan.profileError = null;
+
+      if (plan.decision) {
+        this.mergeProfileIntoDecision(plan);
+        if (
+          plan.status === "ready" ||
+          plan.status === "ducking" ||
+          plan.status === "executed"
+        ) {
+          console.log(
+            `%c[Jev profile]%c ${plan.decision.effectiveJumpProfile} short=${Math.round((plan.decision.profile_probabilities.short ?? 0) * 100)}% full=${Math.round((plan.decision.profile_probabilities.full ?? 0) * 100)}% vs ${plan.obstacleId}`,
+            "color:#0a7;font-weight:600",
+            "color:inherit",
+          );
+        }
+      }
+      // Only the queue head is published — later profiles wait their turn.
+      this.publishActiveIo();
     } catch (error) {
-      if (plan.abort.signal.aborted) return null;
-      if (attempt < 1) {
+      if (plan.abort.signal.aborted) return;
+      if (attempt + 1 < JEV_MAX_ATTEMPTS) {
         console.log(
-          "%c[Jev]%c retrying jump profile %s (%s)",
+          `%c[Jev]%c retry profile ${attempt + 2}/${JEV_MAX_ATTEMPTS} %s (%s)`,
           "color:#c60;font-weight:600",
           "color:inherit",
           plan.obstacleId,
           error instanceof Error ? error.message : "request failed",
         );
-        return this.fetchJumpProfile(plan, body, attempt + 1);
+        await this.fetchJumpProfile(plan, attempt + 1);
+        return;
       }
+      const message =
+        error instanceof Error ? error.message : "request failed";
       console.log(
-        "%c[Jev]%c jump profile failed, defaulting to full (%s)",
+        "%c[Jev]%c jump profile missed after retries, keeping full (%s)",
         "color:#666;font-weight:600",
         "color:inherit",
-        error instanceof Error ? error.message : "request failed",
+        message,
       );
-      return {
+      plan.profileResult = {
         jump_profile: "full",
         profile_probabilities: { short: 0, full: 1 },
         durationMs: 0,
       };
+      plan.profileError = message;
+      if (plan.decision) this.mergeProfileIntoDecision(plan);
+      this.publishActiveIo();
     }
   }
 
   private executePlans(snapshot: JevSnapshot) {
-    // Default: release keys unless a plan is actively ducking / about to jump.
     let wantJump = false;
     let wantDuck = false;
 
-    for (const [id, plan] of this.plans) {
+    // Short hop = jump then duck mid-air until landing.
+    if (this.shortHopActive) {
+      if (snapshot.dinosaurMotion === "jumping") {
+        wantDuck = true;
+      } else {
+        this.shortHopActive = false;
+      }
+    }
+
+    // Act in spawn order so a later reply cannot jump the queue.
+    for (const id of [...this.planOrder]) {
+      const plan = this.plans.get(id);
+      if (!plan) {
+        this.retirePlan(id);
+        continue;
+      }
       const obstacle = plan.obstacle;
       const passed =
         obstacle.remove ||
         obstacle.xPos + obstacle.width < snapshot.dinosaurX - 4;
 
       if (passed) {
-        this.plans.delete(id);
+        this.retirePlan(id);
         continue;
       }
 
@@ -629,18 +931,28 @@ export class JevController {
       });
 
       if (obstacle.xPos > threshold) {
-        // Still too far. Keep duck held if already ducking this one.
         if (plan.status === "ducking") {
+          // Short duck: stand up once the bird's leading body has cleared,
+          // so we can jump/duck the next obstacle from a neutral run.
+          if (jumpProfile === "short") {
+            const earlyClear =
+              obstacle.xPos + Math.min(obstacle.width * 0.4, 16) <
+              snapshot.dinosaurX;
+            if (earlyClear) {
+              plan.status = "executed";
+              continue;
+            }
+          }
           wantDuck = true;
         }
         continue;
       }
 
       if (plan.status === "pending") {
-        // Decision too late: abort and skip (no thrash fallback).
+        // Maneuver itself arrived too late — abort this obstacle only.
         plan.status = "late";
         plan.abort.abort();
-        this.emitIo("late", plan.ask, plan.decision ?? null);
+        this.publishActiveIo();
         console.log(
           "%c[Jev]%c late, skipped %s",
           "color:#c60;font-weight:600",
@@ -651,6 +963,15 @@ export class JevController {
       }
 
       if (plan.status === "ducking") {
+        if (jumpProfile === "short") {
+          const earlyClear =
+            obstacle.xPos + Math.min(obstacle.width * 0.4, 16) <
+            snapshot.dinosaurX;
+          if (earlyClear) {
+            plan.status = "executed";
+            continue;
+          }
+        }
         wantDuck = true;
         continue;
       }
@@ -658,17 +979,17 @@ export class JevController {
       if (plan.status !== "ready") continue;
 
       if (action === "jump") {
-        // Only jump when grounded; otherwise wait (don't spam).
         if (snapshot.dinosaurMotion === "jumping") {
           continue;
         }
         if (snapshot.dinosaurMotion === "ducking") {
-          // Stand up first next frames.
+          // Stand up first so the next hop starts from neutral.
           wantDuck = false;
           continue;
         }
         wantJump = true;
         this.jumpProfile = jumpProfile;
+        this.shortHopActive = jumpProfile === "short";
         plan.status = "executed";
         logJevAct(this.lastAction, "jump", plan.decision!, null);
       } else if (action === "duck") {
@@ -681,7 +1002,6 @@ export class JevController {
         plan.status = "ducking";
         logJevAct(this.lastAction, "duck", plan.decision!, null);
       } else {
-        // keep_running: clear the plan; code does nothing.
         plan.status = "executed";
       }
     }

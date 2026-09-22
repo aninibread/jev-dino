@@ -7,14 +7,13 @@ import {
   LANE_HEIGHT,
   SPECTATE_ACCEL_MULT,
   SPECTATE_ELAPSED_MULT,
-  SPECTATE_MIN_SPEED,
   SPECTATE_MS,
 } from "./constants";
 import { Dino } from "./dino";
 import { CloudField, HorizonLine } from "./horizon";
 import { JevController, type JevIoStatus, type JevSnapshot } from "./jevController";
 import { ObstacleManager } from "./obstacles";
-import { MAX_SPEED, stepSpeed } from "./speedCurve";
+import { stepSpeed } from "./speedCurve";
 import type {
   DecideResponse,
   DinosaurMotion,
@@ -37,6 +36,8 @@ export type RaceSnapshot = {
   lastJevAsk: JevAskView | null;
   jevIoStatus: JevIoStatus;
   jevIoError: string | null;
+  jevProfileStatus: JevIoStatus;
+  jevProfileError: string | null;
   /** Seconds left in the watch-Jev window (spectating only). */
   spectateLeftMs: number;
 };
@@ -69,6 +70,8 @@ export class RaceGame {
   lastJevAsk: JevAskView | null = null;
   jevIoStatus: JevIoStatus = "idle";
   jevIoError: string | null = null;
+  jevProfileStatus: JevIoStatus = "idle";
+  jevProfileError: string | null = null;
   private spectateElapsedMs = 0;
   /** Frozen bitmap of the YOU lane after crash (spectate / ended). */
   private youFreeze: HTMLCanvasElement | null = null;
@@ -93,9 +96,11 @@ export class RaceGame {
     this.jev = new Dino("JEV");
     this.jevController = new JevController({
       getSnapshot: () => this.buildJevSnapshot(),
-      onIo: ({ status, ask, decision, error }) => {
+      onIo: ({ status, profileStatus, ask, decision, error, profileError }) => {
         this.jevIoStatus = status;
         this.jevIoError = error ?? null;
+        this.jevProfileStatus = profileStatus;
+        this.jevProfileError = profileError ?? null;
         this.lastJevAsk = ask;
         if (decision) this.lastJev = decision;
         this.emit();
@@ -229,6 +234,8 @@ export class RaceGame {
     this.lastJevAsk = null;
     this.jevIoStatus = "idle";
     this.jevIoError = null;
+    this.jevProfileStatus = "idle";
+    this.jevProfileError = null;
     this.duckHeld = false;
     this.you.startRunning();
     this.jev.startRunning();
@@ -281,10 +288,8 @@ export class RaceGame {
     this.clearTimer += deltaTime;
     if (spectating) this.spectateElapsedMs += deltaTime;
     // Chromium-style: nudge speed every frame toward MAX_SPEED.
+    // Spectate only accelerates a bit faster — never snap to a high floor.
     this.speed = stepSpeed(this.speed, speedDt);
-    if (spectating) {
-      this.speed = Math.min(MAX_SPEED, Math.max(this.speed, SPECTATE_MIN_SPEED));
-    }
 
     if (this.clearTimer > CLEAR_TIME_MS) {
       this.obstacles.update(deltaTime, this.speed, this.elapsedMs);
@@ -314,7 +319,11 @@ export class RaceGame {
       const duckHeld = duckKey >= 0.45;
 
       if (this.jev.jumping) {
-        this.jev.setDuck(duckHeld);
+        // Short hop is jump-then-duck; keep holding duck once min height is hit
+        // (or whenever the controller asks for duck mid-air).
+        const shortSlam =
+          this.jev.jumpProfile === "short" && this.jev.reachedMinHeight;
+        if (duckHeld || shortSlam) this.jev.setDuck(true);
       } else if (duckHeld) {
         this.jev.setDuck(true);
       } else {
@@ -350,8 +359,7 @@ export class RaceGame {
     this.winner = "jev";
     this.spectateElapsedMs = 0;
     this.duckHeld = false;
-    // Skip the early crawl — jump straight into a fast showcase stretch.
-    this.speed = Math.min(MAX_SPEED, Math.max(this.speed, SPECTATE_MIN_SPEED));
+    // Keep current speed and ramp from here — no sudden jump.
     this.captureYouLane();
     this.emit();
   }
@@ -442,6 +450,8 @@ export class RaceGame {
       lastJevAsk: this.lastJevAsk,
       jevIoStatus: this.jevIoStatus,
       jevIoError: this.jevIoError,
+      jevProfileStatus: this.jevProfileStatus,
+      jevProfileError: this.jevProfileError,
       spectateLeftMs:
         this.phase === "spectating"
           ? Math.max(0, SPECTATE_MS - this.spectateElapsedMs)

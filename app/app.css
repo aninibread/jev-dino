@@ -45,19 +45,17 @@ a:focus-visible {
   min-height: 100vh;
   min-height: 100dvh;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr;
 }
 
-.site-header,
-.site-footer {
+.site-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 22px 28px;
 }
 
-.site-header button,
-.site-footer button {
+.site-header button {
   border: 0;
   padding: 4px;
   background: transparent;
@@ -69,28 +67,13 @@ a:focus-visible {
   letter-spacing: -0.06em;
 }
 
-.site-header nav button,
-.site-footer {
+.site-header nav button {
   color: var(--muted);
   font-size: 13px;
 }
 
-.site-header nav button:hover,
-.site-footer button:hover,
-.site-footer a:hover {
+.site-header nav button:hover {
   color: var(--ink);
-}
-
-.site-footer {
-  justify-content: flex-end;
-  gap: 16px;
-  padding-top: 40px;
-  padding-bottom: 18px;
-}
-
-.site-footer a {
-  color: inherit;
-  text-decoration: none;
 }
 
 .page {
@@ -181,13 +164,29 @@ a:focus-visible {
   letter-spacing: -0.02em;
 }
 
+.jev-io-status-wrap {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+}
+
 .jev-io-status {
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--muted);
   flex: 0 0 auto;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.jev-io-status:focus-visible {
+  outline: 2px solid #0a7;
+  outline-offset: 2px;
 }
 
 .jev-io-status svg {
@@ -208,6 +207,43 @@ a:focus-visible {
 .jev-io-status.status-late,
 .jev-io-status.status-error {
   color: #a35;
+}
+
+.jev-io-tooltip {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 5;
+  min-width: 10rem;
+  max-width: 16rem;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  background: var(--paper, #fff);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.35;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 12%);
+  text-align: left;
+  white-space: normal;
+}
+
+.jev-io-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.jev-io-section-head-profile {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
 
 @keyframes jev-io-spin {
@@ -286,9 +322,9 @@ a:focus-visible {
 }
 
 .jev-probs-profile {
-  margin-top: 4px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .jev-prob-label {
@@ -492,17 +528,11 @@ a:focus-visible {
 }
 
 @media (max-width: 640px), (pointer: coarse) {
-  .site-header,
-  .site-footer {
+  .site-header {
     padding-left: max(14px, env(safe-area-inset-left));
     padding-right: max(14px, env(safe-area-inset-right));
     padding-top: 12px;
     padding-bottom: 10px;
-  }
-
-  .site-footer {
-    padding-top: 16px;
-    padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
 
   .brand {

@@ -102,7 +102,9 @@ export function RaceCanvas({
         ask={snapshot?.lastJevAsk ?? null}
         decision={snapshot?.lastJev ?? null}
         status={snapshot?.jevIoStatus ?? "idle"}
+        profileStatus={snapshot?.jevProfileStatus ?? "idle"}
         error={snapshot?.jevIoError ?? null}
+        profileError={snapshot?.jevProfileError ?? null}
         active={raceLive}
       />
 

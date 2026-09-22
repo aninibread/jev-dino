@@ -153,7 +153,7 @@ export function parseManeuverResponse(
 
 export function parseJumpProfileResponse(
   value: unknown,
-  state: DecideState,
+  _state: DecideState,
 ): {
   jump_profile: JumpProfile;
   profile_probabilities: JumpProfileProbabilities;
@@ -166,36 +166,15 @@ export function parseJumpProfileResponse(
       block: {},
     };
 
-  let jump_profile = profile.choice as JumpProfile;
-  const shortOk =
-    state.obstacle.kind === "small_cactus" &&
-    state.obstacle.group === "single";
-  if (!shortOk) {
-    jump_profile = "full";
-  }
-
+  const jump_profile = profile.choice as JumpProfile;
+  // Client applies maneuver-aware clamps (short hop only on single small cactus;
+  // short duck is allowed for brief stand-up before the next move).
   const profile_probabilities = parseDistribution(
     profile.block,
     PROFILES,
     jump_profile,
     profile.confidence,
   ) as JumpProfileProbabilities;
-
-  // If short was illegal, fold mass onto full for the bars.
-  if (!shortOk) {
-    return {
-      jump_profile: "full",
-      profile_probabilities: {
-        short: 0,
-        full: Math.max(
-          profile_probabilities.full,
-          profile_probabilities.short,
-          profile.confidence,
-        ),
-      },
-      confidence: profile.confidence,
-    };
-  }
 
   return {
     jump_profile,

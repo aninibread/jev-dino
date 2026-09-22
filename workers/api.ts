@@ -7,6 +7,7 @@ import {
   type DecideResponse,
   type DecideState,
   type DinosaurMotion,
+  type Maneuver,
   type NextObstacleContext,
   type ObstacleDecisionState,
   type ObstacleKind,
@@ -168,8 +169,20 @@ function parseState(raw: Record<string, unknown>): DecideState {
 
   const parsed = parseObstacle(obstacle as Record<string, unknown>, "obstacle");
 
+  const chosen =
+    raw.chosen_maneuver === "jump" ||
+    raw.chosen_maneuver === "duck" ||
+    raw.chosen_maneuver === "keep_running"
+      ? (raw.chosen_maneuver as Maneuver)
+      : null;
+
   return {
     speed: raw.speed,
+    predicted_speed:
+      typeof raw.predicted_speed === "number" &&
+      Number.isFinite(raw.predicted_speed)
+        ? raw.predicted_speed
+        : raw.speed,
     dinosaur_motion: motion,
     obstacle: {
       id: parsed.id,
@@ -179,6 +192,7 @@ function parseState(raw: Record<string, unknown>): DecideState {
       width_px: parsed.width_px,
     },
     next_obstacle: parseNextObstacle(raw.next_obstacle, raw.speed),
+    chosen_maneuver: chosen,
   };
 }
 

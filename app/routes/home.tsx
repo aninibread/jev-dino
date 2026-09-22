@@ -78,7 +78,7 @@ function titleFor(winner: Winner) {
 }
 
 export default function Home() {
-  const [dialog, setDialog] = useState<"rules" | "credits" | null>(null);
+  const [dialog, setDialog] = useState<"rules" | null>(null);
   const [winner, setWinner] = useState<Winner>(null);
 
   return (
@@ -102,59 +102,9 @@ export default function Home() {
         <RaceCanvas onWinnerChange={setWinner} />
       </main>
 
-      <footer className="site-footer">
-        <button type="button" onClick={() => setDialog("credits")}>
-          Credits
-        </button>
-        <a
-          href="https://developers.cloudflare.com/ai/models/typesafe/jev/"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Powered by Jev
-        </a>
-      </footer>
-
       {dialog === "rules" && (
         <Dialog title="How to race" onClose={() => setDialog(null)}>
           <Rules />
-        </Dialog>
-      )}
-      {dialog === "credits" && (
-        <Dialog title="Credits" onClose={() => setDialog(null)}>
-          <div className="rules-content">
-            <p>
-              Dinosaur sprites and gameplay inspiration from Chromium’s offline
-              T-Rex runner (
-              <a
-                href="https://github.com/wayou/t-rex-runner"
-                target="_blank"
-                rel="noreferrer"
-              >
-                wayou/t-rex-runner
-              </a>
-              , BSD-3-Clause).
-            </p>
-            <p>
-              Decisions by{" "}
-              <a
-                href="https://developers.cloudflare.com/ai/models/typesafe/jev/"
-                target="_blank"
-                rel="noreferrer"
-              >
-                TypeSafe Jev
-              </a>{" "}
-              on Cloudflare Workers AI. Per-obstacle maneuver timing inspired by{" "}
-              <a
-                href="https://github.com/joshlarsen/jev-t-rex-runner"
-                target="_blank"
-                rel="noreferrer"
-              >
-                joshlarsen/jev-t-rex-runner
-              </a>
-              .
-            </p>
-          </div>
         </Dialog>
       )}
     </div>

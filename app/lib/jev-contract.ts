@@ -37,9 +37,13 @@ export type NextObstacleContext = ObstacleDecisionState & {
 /** Minimal state sent to Jev for one obstacle. */
 export type DecideState = {
   speed: number;
+  /** Speed expected when the action executes (after lead runway). */
+  predicted_speed?: number;
   dinosaur_motion: DinosaurMotion;
   obstacle: ObstacleDecisionState;
   next_obstacle: NextObstacleContext | null;
+  /** Set on the profile call once the maneuver reply is known. */
+  chosen_maneuver?: Maneuver | null;
 };
 
 /** Soft scores over the three maneuvers (from Jev choice probabilities). */
@@ -90,8 +94,32 @@ export const EMPTY_PROFILE_PROBABILITIES: JumpProfileProbabilities = {
   full: 0,
 };
 
-/** Gaps at or below this (seconds) count as a tight follow-up for short jumps. */
-export const TIGHT_NEXT_SECONDS = 0.55;
+/** Gaps at or below this (seconds) count as a tight follow-up for short recovery. */
+export const TIGHT_NEXT_SECONDS = 0.85;
+
+/**
+ * Gaps this tight (or tighter) usually need a full hop — there is no room to
+ * land and re-act before the next obstacle at race speed.
+ */
+export const ULTRA_TIGHT_SECONDS = 0.3;
+
+export function likelyManeuverFor(
+  flightPath: FlightPath,
+): Maneuver {
+  if (flightPath === "blocks_running_only") return "duck";
+  if (flightPath === "clears_running_dinosaur") return "keep_running";
+  return "jump";
+}
+
+/** Whether a short recovery is physically safe for this maneuver + obstacle. */
+export function shortRecoveryAllowed(
+  action: Maneuver,
+  obstacle: Pick<ObstacleDecisionState, "kind" | "group">,
+): boolean {
+  if (action === "keep_running") return false;
+  if (action === "duck") return true;
+  return obstacle.kind === "small_cactus" && obstacle.group === "single";
+}
 
 export function labelManeuver(action: Maneuver): string {
   if (action === "keep_running") return "Keep running";
@@ -180,9 +208,16 @@ export function maneuverToPresses(action: Maneuver): {
 }
 
 export function buildManeuverState(state: DecideState) {
+  const likely = likelyManeuverFor(state.obstacle.flight_path);
+  const chosen = state.chosen_maneuver ?? null;
+  const predicted =
+    typeof state.predicted_speed === "number"
+      ? state.predicted_speed
+      : state.speed;
   return {
     objective: "Avoid the target obstacle and keep the dinosaur alive.",
     current_speed: Number(state.speed.toFixed(2)),
+    predicted_speed_at_action: Number(predicted.toFixed(2)),
     dinosaur_motion_when_observed: state.dinosaur_motion,
     target_obstacle: {
       kind: state.obstacle.kind,
@@ -190,6 +225,8 @@ export function buildManeuverState(state: DecideState) {
       flight_path: state.obstacle.flight_path,
       width_px: state.obstacle.width_px,
     },
+    likely_maneuver: likely,
+    chosen_maneuver: chosen,
     next_obstacle: state.next_obstacle
       ? {
           kind: state.next_obstacle.kind,
@@ -202,19 +239,21 @@ export function buildManeuverState(state: DecideState) {
           ),
           is_tight_follow_up:
             state.next_obstacle.seconds_until_next <= TIGHT_NEXT_SECONDS,
+          is_ultra_tight_stack:
+            state.next_obstacle.seconds_until_next <= ULTRA_TIGHT_SECONDS,
         }
       : null,
     timing_policy: [
       "The current motion is transient. Browser code will finish it and",
       "execute the chosen maneuver at the safe proximity for the current speed.",
-      "Choose only the maneuver for the target obstacle. Jump height is asked",
-      "in a follow-up call only if this call chooses jump. next_obstacle is",
-      "context for that follow-up, not a second action to plan here.",
+      "Use predicted_speed_at_action for timing judgment: higher speed closes",
+      "gaps faster, so ultra-tight stacks often need a full jump to clear both,",
+      "while moderate gaps favor a short hop or brief duck to recover for next.",
     ].join(" "),
   };
 }
 
-/** First Jev call: maneuver only. */
+/** Maneuver call (fired in parallel with jump_profile). */
 export function buildManeuverQuestions() {
   return {
     maneuver: {
@@ -226,7 +265,7 @@ export function buildManeuverQuestions() {
         "distant obstacle was first observed; do not assume that motion will",
         "still be active when the obstacle arrives.",
         "Choose only the maneuver type for the target. Browser code will handle",
-        "timing, jump height, and any later obstacle separately.",
+        "timing, recovery length, and any later obstacle separately.",
       ].join(" "),
       criteria: {
         jump: {
@@ -252,34 +291,41 @@ export function buildManeuverQuestions() {
   };
 }
 
-/** Second Jev call: jump profile only (after maneuver chose jump). */
+/**
+ * Recovery profile (fired alongside maneuvers once next context is available).
+ * short = get back to a neutral run sooner for the next jump/duck;
+ * full = commit to the safer longer hop or duck hold.
+ */
 export function buildJumpProfileQuestions() {
   return {
     jump_profile: {
       type: "choice",
       instructions: [
-        "The safest maneuver for the target obstacle is already jump.",
-        "Choose the jump trajectory that best clears it and still leaves the",
-        "dinosaur ready for whatever comes next.",
-        "If next_obstacle.is_tight_follow_up is true and the next hazard also",
-        "needs a jump or duck soon, prefer a short hop when the target is a",
-        "single small cactus so the dinosaur lands earlier.",
-        "Browser code will calculate the exact launch time from the game speed.",
+        "Choose short or full recovery for the target obstacle.",
+        "Use chosen_maneuver when present; otherwise use likely_maneuver",
+        "(duck for mid birds, jump for ground hazards / low birds).",
+        "Factor current_speed and predicted_speed_at_action: at high speed,",
+        "the same gap_px closes faster.",
+        "When next_obstacle.is_ultra_tight_stack is true at high predicted",
+        "speed, prefer full jump so one arc clears both hazards.",
+        "When next_obstacle.is_tight_follow_up is true but not ultra-tight,",
+        "prefer short (jump-then-duck hop, or brief duck) so the dinosaur",
+        "returns to a neutral run for the next move.",
+        "When next_obstacle is null or not tight, prefer full.",
       ].join(" "),
       criteria: {
         short: {
           what: [
-            "Use only for one small cactus.",
-            "Prefer short when a tight next_obstacle follows that will need",
-            "another jump or duck soon after landing.",
-            "Do not use for a large cactus, grouped cacti, or a pterodactyl.",
+            "Choose short when a moderate next gap needs a second jump or duck",
+            "soon: jump-then-duck short hop over a single small cactus, or a",
+            "brief duck under a mid bird, then stand for the follow-up.",
           ].join(" "),
         },
         full: {
           what: [
-            "Use maximum safe airtime for every large cactus, grouped cactus,",
-            "pterodactyl, uncertain obstacle, or when the next hazard is far",
-            "or null.",
+            "Choose full for maximum clearance, null/far next, large or grouped",
+            "cacti, low bird jumps, or ultra-tight stacks at high speed where",
+            "landing between hazards would fail.",
           ].join(" "),
         },
       },
