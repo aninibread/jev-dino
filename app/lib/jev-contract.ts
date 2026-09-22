@@ -1,59 +1,83 @@
 /**
- * Jev decision contract — raw window only.
+ * Jev decide contract — fair, player-visible I/O.
  *
- * The browser sends what a player can see (speed, dino pose, nearby obstacles).
- * Jev answers jump_now / duck_now. Nothing else decides for Jev.
+ * INPUT: only what a human sees on the lane (pose, speed, visible obstacles).
+ * OUTPUT: key-hold beliefs (press jump / press duck), like a human holding keys.
+ * The browser never invents an action for Jev — it only applies those holds.
  */
 
 export type ObstacleKind = "cactus-small" | "cactus-large" | "bird";
 
-/** Obstacle as seen in the lane — geometry only, no recommended action. */
+/** What your eyes can tell about a bird's altitude (not a recommended move). */
+export type BirdAltitude = "high" | "mid" | "low";
+
 export type UpcomingObstacle = {
   type: ObstacleKind;
-  /** Pixels from dino to obstacle left edge (negative = overlapping / past). */
+  /** Pixels from dino nose to obstacle (negative = overlapping). */
   dx: number;
   width: number;
   height: number;
-  /** Canvas y of obstacle top (lower y = higher on screen). */
+  /** Canvas y of top (smaller = higher on screen). */
   y: number;
-  /** dx / scroll speed — same estimate a player makes from distance + pace. */
-  time_to_impact: number;
+  /** Rough "how soon" from distance ÷ current scroll — same mental math a player does. */
+  seconds_away: number;
+  /** Only for birds — visible altitude band. */
+  bird_altitude?: BirdAltitude;
 };
 
 export type DecideState = {
   t: number;
+  /** Shown on the HUD. */
   speed: number;
   px_per_sec: number;
   dino: {
-    y: number;
-    vy: number;
-    ducking: boolean;
+    /** True when feet on the ground. */
     grounded: boolean;
-    /** True when rising (vy < 0 in our coords). */
+    ducking: boolean;
+    /** In a jump arc. */
+    airborne: boolean;
+    /** Rising vs falling — visible from the arc. */
     ascending: boolean;
+    /** How high in the jump, roughly (0 = ground, 1 ≈ peak). */
+    jump_height_frac: number;
   };
-  /** Hazards currently on-screen / approaching (nearest first). */
-  upcoming: UpcomingObstacle[];
+  /** Obstacles currently on the visible runway (nearest first). */
+  visible: UpcomingObstacle[];
 };
 
 export type JevAction = "run" | "jump" | "duck";
 
 export type DecideResponse = {
   action: JevAction;
-  jump_now: number;
-  duck_now: number;
+  /** Belief that the JUMP key is held (space). */
+  press_jump: number;
+  /** Belief that the DUCK key is held (down) — mid-air = speed-drop. */
+  press_duck: number;
   confidence: number;
   durationMs: number;
   source: "jev" | "none";
 };
 
-/** How far ahead (seconds) we include obstacles in the window. */
-export const LOOKAHEAD_S = 2.2;
-/** Cap on obstacles sent in one decide payload. */
-export const LOOKAHEAD_COUNT = 6;
+/** Max obstacles a player can reasonably track on the 600px lane. */
+export const VISIBLE_COUNT = 5;
 
-export function pickAction(jump_now: number, duck_now: number): JevAction {
-  if (duck_now >= 0.55 && duck_now >= jump_now) return "duck";
-  if (jump_now >= 0.5) return "jump";
+/**
+ * Map key-hold beliefs → committed action.
+ * Airborne: duck wins when held (speed-drop). Grounded: stronger hold wins.
+ */
+export function pickAction(press_jump: number, press_duck: number, airborne: boolean): JevAction {
+  if (airborne) {
+    if (press_duck >= 0.45) return "duck";
+    return "run"; // can't jump mid-air; holding jump does nothing until land
+  }
+  if (press_duck >= 0.5 && press_duck >= press_jump) return "duck";
+  if (press_jump >= 0.45) return "jump";
   return "run";
+}
+
+/** Visible altitude band for pterodactyls — matches Chromium yPos [100, 75, 50]. */
+export function birdAltitude(y: number): BirdAltitude {
+  if (y <= 55) return "high";
+  if (y <= 80) return "mid";
+  return "low";
 }

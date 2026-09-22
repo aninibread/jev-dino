@@ -1,5 +1,4 @@
 import {
-  LOOKAHEAD_S,
   pickAction,
   type DecideResponse,
   type DecideState,
@@ -14,8 +13,9 @@ export type JevControllerOptions = {
 };
 
 /**
- * Pure Jev control: raw window in → jump_now / duck_now out → action.
- * No local planner, tactics, or physics override.
+ * Fair control loop: poll Jev with the visible lane; apply key-hold beliefs.
+ * Re-asks as soon as a reply lands (and on landing) so consecutive obstacles
+ * get a fresh look — still no local planner inventing moves.
  */
 export class JevController {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -23,14 +23,16 @@ export class JevController {
   private inflight: AbortController | null = null;
   private lastAction: JevAction = "run";
   private lastDecision: DecideResponse | null = null;
-  private jumpBelief = 0;
-  private duckBelief = 0;
+  private pressJump = 0;
+  private pressDuck = 0;
+  private wasAirborne = false;
   private options: Required<Pick<JevControllerOptions, "intervalMs">> &
     JevControllerOptions;
   running = false;
 
   constructor(options: JevControllerOptions) {
-    this.options = { intervalMs: 90, ...options };
+    // Poll often; actual rate is gated by in-flight (one ask at a time).
+    this.options = { intervalMs: 50, ...options };
   }
 
   get action() {
@@ -45,11 +47,12 @@ export class JevController {
     this.stop();
     this.running = true;
     this.lastAction = "run";
-    this.jumpBelief = 0;
-    this.duckBelief = 0;
+    this.pressJump = 0;
+    this.pressDuck = 0;
+    this.wasAirborne = false;
     this.lastDecision = null;
     console.log(
-      "%c[Jev]%c raw-window mode — Jev owns jump/duck (no local tactics)",
+      "%c[Jev]%c fair mode — visible lane in, key-hold beliefs out (no tactics)",
       "color:#0a7;font-weight:700",
       "color:inherit",
     );
@@ -57,7 +60,7 @@ export class JevController {
     void this.askJev();
     const tick = () => {
       if (!this.running) return;
-      this.applyBeliefs();
+      this.onFrame();
       this.frameHook = requestAnimationFrame(tick);
     };
     this.frameHook = requestAnimationFrame(tick);
@@ -73,36 +76,47 @@ export class JevController {
     this.inflight = null;
   }
 
-  /** Map current nouls → run / jump / duck. Nothing else votes. */
-  private applyBeliefs() {
+  private onFrame() {
     const state = this.options.getState();
     if (!state) return;
 
-    const next = state.upcoming[0];
-    // No hazard in view — release held actions; don't act on stale beliefs.
-    if (!next || next.time_to_impact > LOOKAHEAD_S) {
-      this.jumpBelief = 0;
-      this.duckBelief = 0;
+    // Landing edge → ask immediately (second cactus often needs a fresh press).
+    if (this.wasAirborne && state.dino.grounded) {
+      void this.askJev();
+    }
+    this.wasAirborne = state.dino.airborne;
+
+    this.applyHolds(state);
+  }
+
+  private applyHolds(state: DecideState) {
+    if (state.visible.length === 0) {
+      this.pressJump = 0;
+      this.pressDuck = 0;
       this.emitAction("run", 0, 0, "jev", state);
       return;
     }
 
-    const action = pickAction(this.jumpBelief, this.duckBelief);
-    this.emitAction(action, this.jumpBelief, this.duckBelief, "jev", state);
+    const action = pickAction(
+      this.pressJump,
+      this.pressDuck,
+      state.dino.airborne,
+    );
+    this.emitAction(action, this.pressJump, this.pressDuck, "jev", state);
   }
 
   private emitAction(
     action: JevAction,
-    jump_now: number,
-    duck_now: number,
+    press_jump: number,
+    press_duck: number,
     source: DecideResponse["source"],
     state: DecideState | null = null,
   ) {
     const decision: DecideResponse = {
       action,
-      jump_now,
-      duck_now,
-      confidence: Math.max(jump_now, duck_now),
+      press_jump,
+      press_duck,
+      confidence: Math.max(press_jump, press_duck),
       durationMs: this.lastDecision?.durationMs ?? 0,
       source,
     };
@@ -118,15 +132,11 @@ export class JevController {
 
   private async askJev() {
     if (!this.running) return;
-    // Never abort an in-flight ask — dx changes every tick and was canceling
-    // every request before Jev (~600ms) could answer.
     if (this.inflight) return;
 
     const state = this.options.getState();
     if (!state) return;
-
-    const next = state.upcoming[0];
-    if (!next || next.time_to_impact > LOOKAHEAD_S) return;
+    if (state.visible.length === 0) return;
 
     const controller = new AbortController();
     this.inflight = controller;
@@ -143,42 +153,57 @@ export class JevController {
         ]),
       });
       if (!response.ok) throw new Error(`decide failed (${response.status})`);
-      const body = (await response.json()) as DecideResponse;
+      const body = (await response.json()) as DecideResponse & {
+        jump_now?: number;
+        duck_now?: number;
+      };
       if (!this.running) return;
 
-      this.jumpBelief =
-        typeof body.jump_now === "number"
-          ? body.jump_now
-          : body.action === "jump"
-            ? 0.9
-            : 0.05;
-      this.duckBelief =
-        typeof body.duck_now === "number"
-          ? body.duck_now
-          : body.action === "duck"
-            ? 0.9
-            : 0.05;
+      // Prefer press_* ; accept legacy jump_now/duck_now if a proxy remaps.
+      this.pressJump =
+        typeof body.press_jump === "number"
+          ? body.press_jump
+          : typeof body.jump_now === "number"
+            ? body.jump_now
+            : body.action === "jump"
+              ? 0.9
+              : 0.05;
+      this.pressDuck =
+        typeof body.press_duck === "number"
+          ? body.press_duck
+          : typeof body.duck_now === "number"
+            ? body.duck_now
+            : body.action === "duck"
+              ? 0.9
+              : 0.05;
 
       this.lastDecision = {
-        ...body,
-        jump_now: this.jumpBelief,
-        duck_now: this.duckBelief,
-        action: pickAction(this.jumpBelief, this.duckBelief),
+        action: pickAction(
+          this.pressJump,
+          this.pressDuck,
+          state.dino.airborne,
+        ),
+        press_jump: this.pressJump,
+        press_duck: this.pressDuck,
+        confidence: Math.max(this.pressJump, this.pressDuck),
+        durationMs: body.durationMs ?? 0,
         source: "jev",
       };
       logJevReply(this.lastDecision, state);
       this.options.onDecision(this.lastDecision);
-      this.applyBeliefs();
+      this.applyHolds(state);
     } catch (error) {
       if ((error as Error)?.name === "AbortError") return;
       console.log(
-        "%c[Jev reply]%c (request failed — holding last beliefs) %s",
+        "%c[Jev reply]%c (request failed — holding last keys) %s",
         "color:#666;font-weight:600",
         "color:inherit",
         error instanceof Error ? error.message : "request failed",
       );
     } finally {
       if (this.inflight === controller) this.inflight = null;
+      // Chain the next look as soon as we're free while hazards remain.
+      if (this.running) void this.askJev();
     }
   }
 }

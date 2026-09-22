@@ -1,9 +1,10 @@
 import {
-  LOOKAHEAD_COUNT,
+  birdAltitude,
   pickAction,
   type DecideResponse,
   type DecideState,
   type ObstacleKind,
+  VISIBLE_COUNT,
 } from "../app/lib/jev-contract";
 import { ApiError, decideWithJev, publicError } from "./ai";
 
@@ -51,27 +52,28 @@ async function limitedBody(request: Request, limit: number): Promise<Uint8Array>
 
 function parseState(raw: Record<string, unknown>): DecideState {
   const dino = raw.dino;
-  const upcoming = raw.upcoming;
+  const visible = raw.visible ?? raw.upcoming;
   if (
     typeof raw.t !== "number" ||
     typeof raw.speed !== "number" ||
     !dino ||
     typeof dino !== "object" ||
     Array.isArray(dino) ||
-    !Array.isArray(upcoming)
+    !Array.isArray(visible)
   ) {
     throw new ApiError(400, "Invalid game state.");
   }
   const d = dino as Record<string, unknown>;
-  if (
-    typeof d.y !== "number" ||
-    typeof d.vy !== "number" ||
-    typeof d.ducking !== "boolean" ||
-    typeof d.grounded !== "boolean"
-  ) {
-    throw new ApiError(400, "Invalid dino state.");
-  }
-  if (upcoming.length > LOOKAHEAD_COUNT) {
+  const grounded = typeof d.grounded === "boolean" ? d.grounded : true;
+  const ducking = typeof d.ducking === "boolean" ? d.ducking : false;
+  const airborne =
+    typeof d.airborne === "boolean" ? d.airborne : !grounded;
+  const ascending =
+    typeof d.ascending === "boolean" ? d.ascending : false;
+  const jump_height_frac =
+    typeof d.jump_height_frac === "number" ? d.jump_height_frac : 0;
+
+  if (visible.length > VISIBLE_COUNT) {
     throw new ApiError(400, "Too many obstacles.");
   }
 
@@ -80,8 +82,8 @@ function parseState(raw: Record<string, unknown>): DecideState {
       ? raw.px_per_sec
       : Math.max(raw.speed, 0.1) * 60;
 
-  const parsedUpcoming: DecideState["upcoming"] = [];
-  for (const item of upcoming) {
+  const parsed: DecideState["visible"] = [];
+  for (const item of visible) {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
       throw new ApiError(400, "Invalid obstacle.");
     }
@@ -95,17 +97,28 @@ function parseState(raw: Record<string, unknown>): DecideState {
     ) {
       throw new ApiError(400, "Invalid obstacle fields.");
     }
-    const time_to_impact =
-      typeof o.time_to_impact === "number"
-        ? o.time_to_impact
-        : o.dx / px_per_sec;
-    parsedUpcoming.push({
-      type: o.type as ObstacleKind,
+    const type = o.type as ObstacleKind;
+    const seconds_away =
+      typeof o.seconds_away === "number"
+        ? o.seconds_away
+        : typeof o.time_to_impact === "number"
+          ? o.time_to_impact
+          : o.dx / px_per_sec;
+    parsed.push({
+      type,
       dx: o.dx,
       width: o.width,
       height: o.height,
       y: o.y,
-      time_to_impact,
+      seconds_away,
+      bird_altitude:
+        type === "bird"
+          ? o.bird_altitude === "high" ||
+            o.bird_altitude === "mid" ||
+            o.bird_altitude === "low"
+            ? o.bird_altitude
+            : birdAltitude(o.y)
+          : undefined,
     });
   }
 
@@ -114,13 +127,13 @@ function parseState(raw: Record<string, unknown>): DecideState {
     speed: raw.speed,
     px_per_sec,
     dino: {
-      y: d.y,
-      vy: d.vy,
-      ducking: d.ducking,
-      grounded: d.grounded,
-      ascending: typeof d.ascending === "boolean" ? d.ascending : d.vy < 0,
+      grounded,
+      ducking,
+      airborne,
+      ascending,
+      jump_height_frac,
     },
-    upcoming: parsedUpcoming,
+    visible: parsed,
   };
 }
 
@@ -143,13 +156,12 @@ export async function handleApi(
         return json(decision);
       } catch (error) {
         console.error("jev decide failed", error);
-        // No heuristic stand-in — surface failure so the client holds beliefs.
         const { status, message } = publicError(error);
         return json(
           {
             action: "run" as const,
-            jump_now: 0,
-            duck_now: 0,
+            press_jump: 0,
+            press_duck: 0,
             confidence: 0,
             durationMs: 0,
             source: "none" as const,

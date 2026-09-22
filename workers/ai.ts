@@ -46,23 +46,31 @@ function findNoul(value: unknown, key: string): number | null {
 
 export function parseDecideResponse(
   value: unknown,
+  airborne: boolean,
 ): Omit<DecideResponse, "durationMs" | "source"> {
-  const jump_now = findNoul(value, "jump_now");
-  const duck_now = findNoul(value, "duck_now");
-  if (jump_now === null || duck_now === null) {
+  // Prefer press_*; fall back to legacy jump_now/duck_now names.
+  const press_jump =
+    findNoul(value, "press_jump") ?? findNoul(value, "jump_now");
+  const press_duck =
+    findNoul(value, "press_duck") ?? findNoul(value, "duck_now");
+  if (press_jump === null || press_duck === null) {
     throw new ApiError(502, "Jev returned an unreadable answer.");
   }
-  const action = pickAction(jump_now, duck_now);
+  const action = pickAction(press_jump, press_duck, airborne);
   return {
     action,
-    jump_now,
-    duck_now,
-    confidence: Math.max(jump_now, duck_now, 1 - Math.max(jump_now, duck_now)),
+    press_jump,
+    press_duck,
+    confidence: Math.max(
+      press_jump,
+      press_duck,
+      1 - Math.max(press_jump, press_duck),
+    ),
   };
 }
 
 /**
- * Ask Jev with raw lane state only — no tactics / clearance / planner hints.
+ * Fair prompt: visible lane + key holds. No tactics / clearance / engine cheats.
  */
 export async function decideWithJev(
   ai: Ai,
@@ -70,14 +78,20 @@ export async function decideWithJev(
   signal?: AbortSignal,
 ): Promise<DecideResponse> {
   const start = performance.now();
-  const window = state.upcoming.slice(0, 6).map((o) => ({
+  const obstacles = state.visible.map((o, i) => ({
+    index: i + 1,
     type: o.type,
-    dx_px: Math.round(o.dx),
+    distance_px: Math.round(o.dx),
     width_px: o.width,
     height_px: o.height,
-    y: o.y,
-    seconds_until_reach: Number(o.time_to_impact.toFixed(3)),
+    seconds_away: Number(o.seconds_away.toFixed(3)),
+    ...(o.bird_altitude ? { bird_altitude: o.bird_altitude } : {}),
   }));
+
+  const gap_1_to_2_px =
+    state.visible.length >= 2
+      ? Math.round(state.visible[1]!.dx - state.visible[0]!.dx)
+      : null;
 
   const result = await ai.run(
     "typesafe/jev",
@@ -85,47 +99,42 @@ export async function decideWithJev(
       state: {
         race_time_seconds: Number(state.t.toFixed(2)),
         speed: Number(state.speed.toFixed(2)),
-        pixels_per_second: Number(state.px_per_sec.toFixed(1)),
         dino: {
-          y: state.dino.y,
-          vertical_velocity: state.dino.vy,
-          grounded: state.dino.grounded,
+          on_ground: state.dino.grounded,
           ducking: state.dino.ducking,
-          ascending: state.dino.ascending,
+          in_the_air: state.dino.airborne,
+          rising: state.dino.ascending,
+          how_high_in_jump: Number(state.dino.jump_height_frac.toFixed(2)),
         },
-        /**
-         * Same info a human has on screen: obstacles ahead, their size/height,
-         * and how soon they arrive at the current scroll speed.
-         * Bird y≈50 is high (often clear while standing), y≈75 mid, y≈100 low.
-         * Cacti always sit on the ground — jump them.
-         * Duck mid-air = fast-fall (speed-drop) like Chrome Dino.
-         */
-        obstacles_ahead: window,
-        notes: {
-          canvas_y_grows_downward: true,
-          dino_ground_y_about: 93,
-          standing_dino_height_px: 47,
-          ducking_dino_height_px: 25,
-          jump_airtime_about_seconds: 0.58,
+        /** Everything currently on the runway ahead of you (nearest first). */
+        visible_obstacles: obstacles,
+        gap_between_1st_and_2nd_px: gap_1_to_2_px,
+        how_to_read: {
+          cactus: "On the ground — you must jump over it.",
+          bird_high: "Flies overhead — usually run under it (don't jump into it).",
+          bird_mid: "Around head height — jump or duck.",
+          bird_low: "Near the ground — jump over it.",
+          duck_in_air:
+            "Holding duck while airborne makes you fall fast (like Chrome Dino) so you can jump again sooner for a close second obstacle.",
         },
       },
       questions: {
-        jump_now: {
+        press_jump: {
           type: "noul",
           instructions:
-            "You control the dinosaur. Looking only at obstacles_ahead and dino pose, should you JUMP RIGHT NOW? Jump for ground cacti and low birds when they are close enough to clear — not too early (you'll land on them) and not too late. Do not jump into a high bird that a standing dino would run under. If already airborne, usually near 0 (you cannot jump again until you land). Return a belief 0–1.",
+            "You play like a human holding the JUMP key. Look at ALL visible_obstacles, not just the first. Return high if you want the jump key HELD now: e.g. a cactus (or low bird) is close enough to clear, or you just landed and the next cactus still needs a jump. Return low if you should release jump (too early, already clearing by running under a high bird, or you need to duck instead). If you are in the air you cannot jump again — press_jump can stay high to jump the moment you land for a second obstacle. Answers are held until the next update (~0.5–1s), so think a step ahead.",
           criteria: {
-            true: "Jump this instant to clear the hazard.",
-            false: "Do not jump now.",
+            true: "Hold the jump key.",
+            false: "Do not hold jump.",
           },
         },
-        duck_now: {
+        press_duck: {
           type: "noul",
           instructions:
-            "Should you DUCK RIGHT NOW? Duck under birds that would hit a standing dino, and keep ducking until the bird has passed. Mid-air, duck means speed-drop (slam down) when you need to land sooner for a tight next obstacle. High birds that clear a standing runner → near 0. Return a belief 0–1.",
+            "You play like a human holding the DUCK key. High when: (1) a mid/low-ish bird needs crouching under, keep held until it passes; or (2) you are IN THE AIR after jumping the first of two CLOSE obstacles (small gap_between_1st_and_2nd_px / second still soon) and should slam down to land in time for the next jump. Low for high birds you can run under, and low when a normal single jump is enough. Mid-air duck = fast fall. Answers are held until the next update.",
           criteria: {
-            true: "Duck or speed-drop this instant.",
-            false: "Do not duck now.",
+            true: "Hold the duck key (or mid-air slam).",
+            false: "Do not hold duck.",
           },
         },
       },
@@ -138,7 +147,11 @@ export async function decideWithJev(
     },
   );
   const durationMs = performance.now() - start;
-  return { ...parseDecideResponse(result), durationMs, source: "jev" };
+  return {
+    ...parseDecideResponse(result, state.dino.airborne),
+    durationMs,
+    source: "jev",
+  };
 }
 
 export function publicError(error: unknown): {

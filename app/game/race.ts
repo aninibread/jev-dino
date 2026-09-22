@@ -14,7 +14,7 @@ import { JevController } from "./jevController";
 import { ObstacleManager } from "./obstacles";
 import { stepSpeed } from "./speedCurve";
 import type { DecideResponse, JevAction } from "../lib/jev-contract";
-import { LOOKAHEAD_COUNT, LOOKAHEAD_S } from "../lib/jev-contract";
+import { birdAltitude, VISIBLE_COUNT } from "../lib/jev-contract";
 
 export type RacePhase = "idle" | "playing" | "spectating" | "ended";
 export type Winner = "you" | "jev" | "tie" | null;
@@ -254,30 +254,38 @@ export class RaceGame {
   private buildJevState() {
     if (!this.live || this.jev.crashed) return null;
     const px_per_sec = Math.max(this.speed, 0.1) * 60;
-    // Raw window only — geometry a player can see, no tactics / clearance.
-    const upcoming = this.obstacles
-      .upcomingFor(TREX.START_X, LOOKAHEAD_COUNT)
+    // Only obstacles a player can see on the 600px runway ahead of the dino.
+    const visibleLimitPx = DEFAULT_WIDTH - TREX.START_X;
+    const groundY = this.jev.groundYPos;
+    const jumpHeightFrac = this.jev.grounded
+      ? 0
+      : Math.min(1, Math.max(0, (groundY - this.jev.yPos) / 55));
+
+    const visible = this.obstacles
+      .upcomingFor(TREX.START_X, VISIBLE_COUNT)
+      .filter((o) => o.dx < visibleLimitPx && o.dx + o.width > -30)
       .map((o) => ({
         type: o.type,
         dx: o.dx,
         width: o.width,
         height: o.height,
         y: o.y,
-        time_to_impact: o.dx / px_per_sec,
-      }))
-      .filter((o) => o.time_to_impact < LOOKAHEAD_S);
+        seconds_away: o.dx / px_per_sec,
+        ...(o.type === "bird" ? { bird_altitude: birdAltitude(o.y) } : {}),
+      }));
+
     return {
       t: this.elapsedMs / 1000,
       speed: this.speed,
       px_per_sec,
       dino: {
-        y: this.jev.yPos,
-        vy: this.jev.jumpVelocity,
-        ducking: this.jev.ducking,
         grounded: this.jev.grounded,
+        ducking: this.jev.ducking,
+        airborne: !this.jev.grounded,
         ascending: this.jev.jumping && this.jev.jumpVelocity < 0,
+        jump_height_frac: Number(jumpHeightFrac.toFixed(2)),
       },
-      upcoming,
+      visible,
     };
   }
 
@@ -289,8 +297,8 @@ export class RaceGame {
     } else if (action === "duck") {
       this.jev.setDuck(true);
     } else {
+      // Release duck only — don't chop a jump arc with endJump.
       this.jev.setDuck(false);
-      this.jev.endJump();
     }
   }
 
@@ -323,8 +331,15 @@ export class RaceGame {
     }
 
     if (!this.jev.crashed) {
-      if (this.jevController.action === "duck") {
+      // Apply Jev's key holds every frame (same as a human holding keys).
+      const act = this.jevController.action;
+      if (act === "duck") {
         this.jev.setDuck(true);
+      } else if (act === "jump") {
+        this.jev.setDuck(false);
+        this.jev.jump();
+      } else {
+        this.jev.setDuck(false);
       }
       this.jev.update(deltaTime);
       this.jevDistance += this.speed * deltaTime * 0.1;
