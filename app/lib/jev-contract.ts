@@ -306,9 +306,10 @@ export function buildJumpProfileQuestions() {
         "seconds_until_next and earlier recovery helps the next move,",
         "including when next_obstacles[0].flight_path is",
         "clears_running_dinosaur so you should land before it.",
-        "Lean full when next_obstacles is empty or the first gap is comfortable,",
-        "or when next_obstacles[0] and next_obstacles[1] have small gaps and",
-        "large width_px / group_size so landing between them is risky.",
+        "Lean full when next_obstacles is empty or the first gap is comfortable.",
+        "Clearing two obstacles in one full jump is rare: only lean that way when",
+        "target_obstacle.width_px + gap_px + next_obstacles[0].width_px is small",
+        "enough that one full jump can actually cover both at current_speed.",
         "Prefer full when unsure. timing_policy: browser times short duck-after-clear.",
       ].join(" "),
       criteria: {
@@ -320,8 +321,8 @@ export function buildJumpProfileQuestions() {
         },
         full: {
           what: [
-            "next_obstacles is empty or far, or the next two look packed and",
-            "wide (width_px / group_size) so a short recovery is risky.",
+            "next_obstacles is empty or far, or (rarely) one full jump can cover",
+            "both the target and next_obstacles[0] widths plus gap_px.",
           ].join(" "),
         },
       },
