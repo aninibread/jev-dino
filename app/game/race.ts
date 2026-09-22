@@ -102,7 +102,7 @@ export class RaceGame {
         this.jevProfileStatus = profileStatus;
         this.jevProfileError = profileError ?? null;
         this.lastJevAsk = ask;
-        if (decision) this.lastJev = decision;
+        this.lastJev = decision;
         this.emit();
       },
     });
