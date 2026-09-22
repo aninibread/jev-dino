@@ -248,7 +248,9 @@ export function buildManeuverState(state: DecideState) {
       "execute the chosen maneuver at the safe proximity for the current speed.",
       "Use predicted_speed_at_action for timing judgment: higher speed closes",
       "gaps faster. Prefer full recovery unless a moderate next gap clearly",
-      "needs an earlier landing or shorter duck so a second move is possible.",
+      "needs earlier recovery. Browser code owns short-jump timing: after a",
+      "short jump it stays airborne until the target width has scrolled past,",
+      "then ducks to land early — do not invent a duck-after delay yourself.",
     ].join(" "),
   };
 }
@@ -293,7 +295,8 @@ export function buildManeuverQuestions() {
 
 /**
  * Recovery profile (fired alongside maneuvers once next context is available).
- * short = earlier landing / briefer duck (still clears the target);
+ * short = earlier recovery after the target is cleared (code ducks mid-air once
+ * the obstacle width has scrolled past at current speed);
  * full = safer longer hop or duck hold (default).
  */
 export function buildJumpProfileQuestions() {
@@ -311,16 +314,17 @@ export function buildJumpProfileQuestions() {
         "choose full (ultra-tight stacks need one full jump to clear both).",
         "Choose short only when next_obstacle.is_tight_follow_up is true,",
         "the gap is not ultra-tight, and a second jump or duck must happen",
-        "soon after this move — for a single small cactus jump (earlier",
-        "landing, still clears the cactus) or a brief mid-bird duck.",
+        "soon after this move — for a single small cactus jump or a brief",
+        "mid-bird duck. Browser code times the short-jump duck itself",
+        "(after the cactus width clears); you only choose short vs full.",
         "Never choose short for large/grouped cacti or low-bird jumps.",
       ].join(" "),
       criteria: {
         short: {
           what: [
-            "Earlier recovery for a moderate next gap: release the jump early",
-            "over a single small cactus (still clears it, lands sooner), or",
-            "hold a brief duck under a mid bird, then stand for the follow-up.",
+            "Earlier recovery for a moderate next gap: jump a single small",
+            "cactus then let code duck once the width has cleared so you land",
+            "sooner, or hold a brief duck under a mid bird then stand.",
           ].join(" "),
         },
         full: {

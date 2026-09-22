@@ -268,6 +268,7 @@ export class RaceGame {
       speed: this.speed,
       dinosaurMotion,
       dinosaurX: this.jev.xPos,
+      reachedMinHeight: this.jev.reachedMinHeight,
       obstacles: this.obstacles.obstacles,
     };
   }
@@ -319,8 +320,7 @@ export class RaceGame {
       const duckHeld = duckKey >= 0.45;
 
       if (this.jev.jumping) {
-        // Mid-air duck = intentional speed-drop only (e.g. late duck under a bird).
-        // Short jump uses endJump in Dino — never force duck here.
+        // Short hop ducks only after the controller says the obstacle cleared.
         if (duckHeld) this.jev.setDuck(true);
       } else if (duckHeld) {
         this.jev.setDuck(true);

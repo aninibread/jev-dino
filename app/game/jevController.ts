@@ -26,7 +26,7 @@ import {
   type ObstacleKind,
   type SemanticKind,
 } from "../lib/jev-contract";
-import { calculateActionProximityThreshold } from "../lib/timing";
+import { calculateActionProximityThreshold, obstacleClearedForShortDrop } from "../lib/timing";
 import { predictSpeed } from "./speedCurve";
 import type { Obstacle } from "./obstacles";
 import { logJevAct, logJevAsk, logJevReply } from "./jevLog";
@@ -37,6 +37,8 @@ export type JevSnapshot = {
   speed: number;
   dinosaurMotion: DinosaurMotion;
   dinosaurX: number;
+  /** True once the current jump has cleared min height (needed before short drop). */
+  reachedMinHeight: boolean;
   obstacles: Obstacle[];
 };
 
@@ -144,6 +146,11 @@ export class JevController {
   private pressJump = 0;
   private pressDuck = 0;
   private jumpProfile: JumpProfile = "full";
+  /**
+   * Short jump: stay airborne until this obstacle's width has scrolled past,
+   * then duck (speed-drop). Code-owned; not a Jev parameter.
+   */
+  private shortHopObstacle: Obstacle | null = null;
   private options: JevControllerOptions;
   private decideQueue: Array<() => Promise<void>> = [];
   private inFlight = 0;
@@ -293,6 +300,7 @@ export class JevController {
     this.pressJump = 0;
     this.pressDuck = 0;
     this.jumpProfile = "full";
+    this.shortHopObstacle = null;
     console.log(
       `%c[Jev]%c FIFO plan queue; max ${JEV_MAX_IN_FLIGHT} fetches in flight`,
       "color:#0a7;font-weight:700",
@@ -320,6 +328,7 @@ export class JevController {
     this.awaitingProfile.clear();
     this.pressJump = 0;
     this.pressDuck = 0;
+    this.shortHopObstacle = null;
   }
 
   /** Queue a Worker fetch; pump keeps up to JEV_MAX_IN_FLIGHT running. */
@@ -863,6 +872,24 @@ export class JevController {
     let wantJump = false;
     let wantDuck = false;
 
+    // Short hop: full arc until the target width is cleared, then speed-drop.
+    if (this.shortHopObstacle) {
+      if (snapshot.dinosaurMotion === "jumping") {
+        if (
+          snapshot.reachedMinHeight &&
+          obstacleClearedForShortDrop({
+            dinosaurX: snapshot.dinosaurX,
+            obstacleX: this.shortHopObstacle.xPos,
+            obstacleWidth: this.shortHopObstacle.width,
+          })
+        ) {
+          wantDuck = true;
+        }
+      } else {
+        this.shortHopObstacle = null;
+      }
+    }
+
     // Act in spawn order so a later reply cannot jump the queue.
     for (const id of [...this.planOrder]) {
       const plan = this.plans.get(id);
@@ -950,6 +977,8 @@ export class JevController {
         }
         wantJump = true;
         this.jumpProfile = jumpProfile;
+        this.shortHopObstacle =
+          jumpProfile === "short" ? obstacle : null;
         plan.status = "executed";
         logJevAct(this.lastAction, "jump", plan.decision!, null);
       } else if (action === "duck") {
