@@ -54,24 +54,28 @@ export function calculateActionProximityThreshold({
 }
 
 /**
- * Short-jump early drop is code-owned: only slam once the target's trailing
- * edge has scrolled past the dinosaur. Higher speed clears the same width
- * sooner automatically (obstacles move faster); no Jev timing parameter.
+ * Short-jump early drop is code-owned timing (same duck physics as the player).
+ * Press duck once most of the target has scrolled past the dino — earlier than
+ * a full trailing-edge clear — so a short still crosses the obstacle but lands
+ * ready for the next one. A human mid-air duck uses the identical speed-drop.
  */
+export const SHORT_DROP_WIDTH_RATIO = 0.55;
+
 export function obstacleClearedForShortDrop({
   dinosaurX,
   obstacleX,
   obstacleWidth,
-  /** Extra px past the dino's left edge before slamming (hitbox slack). */
-  marginPx = 2,
 }: {
   dinosaurX: number;
   obstacleX: number;
   obstacleWidth: number;
+  /** @deprecated Ignored; earlier duck is controlled by SHORT_DROP_WIDTH_RATIO. */
   marginPx?: number;
 }): boolean {
+  const width = Math.max(0, Number(obstacleWidth) || 0);
+  // Trailing edge need not fully pass the dino — once this fraction of the
+  // width is behind dinosaurX, the shared speed-drop can start.
   return (
-    Number(obstacleX) + Number(obstacleWidth) <
-    Number(dinosaurX) - Number(marginPx)
+    Number(obstacleX) + width * SHORT_DROP_WIDTH_RATIO < Number(dinosaurX)
   );
 }

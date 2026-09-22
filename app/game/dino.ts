@@ -17,6 +17,7 @@ export type DinoStatus = "WAITING" | "RUNNING" | "JUMPING" | "DUCKING" | "CRASHE
  * Chromium T-rex duck behavior (offline.js):
  * - Grounded: switch to DUCKING sprite/hitbox immediately.
  * - Mid-air: setSpeedDrop() — jumpVelocity = 1, fall 3× fast, then duck on land.
+ *   Same speed-drop for player and Jev (short only changes *when* duck is pressed).
  */
 export type JumpProfile = "short" | "full";
 
@@ -114,7 +115,7 @@ export class Dino {
     this.speedDrop = true;
     this.shortHopDrop = fromShortHop || this.jumpProfile === "short";
     // Chromium uses 1; that feels like a pause mid-air. Push harder so the
-    // body drops in a few frames, then crouch on land.
+    // body drops in a few frames, then crouch on land. Same for player + Jev.
     this.jumpVelocity = 8;
     this.reachedMinHeight = true;
   }
@@ -183,8 +184,8 @@ export class Dino {
       if (this.yPos < this.minJumpHeight) {
         this.reachedMinHeight = true;
       }
-      // Short profile stays in a normal arc until the controller ducks after
-      // the obstacle width has cleared (see obstacleClearedForShortDrop).
+      // Short profile stays in a normal arc until the controller ducks earlier
+      // (see obstacleClearedForShortDrop) — same fall physics as a player duck.
     }
 
     if (this.yPos > this.groundYPos) {
