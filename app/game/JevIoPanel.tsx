@@ -231,10 +231,6 @@ export function JevIoPanel({
       aria-live="polite"
       aria-label="Jev input and output"
     >
-      <header className="jev-io-head">
-        <h2>Jev</h2>
-      </header>
-
       <div className="jev-io-grid">
         <div className="jev-io-col">
           <h3>Input</h3>

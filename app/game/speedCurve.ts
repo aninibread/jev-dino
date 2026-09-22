@@ -20,6 +20,11 @@ export function stepSpeed(current: number, deltaTime: number): number {
   return Math.min(MAX_SPEED, current + ACCELERATION * frames);
 }
 
+/** Predict speed after horizonMs of normal acceleration (no spectate boost). */
+export function predictSpeed(current: number, horizonMs: number): number {
+  return stepSpeed(current, Math.max(0, horizonMs));
+}
+
 /**
  * Gap coefficient. Chromium keeps 0.6 constant; we ease it down so packing
  * gets meaner even after speed is near the cap.

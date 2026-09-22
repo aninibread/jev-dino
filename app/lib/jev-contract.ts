@@ -37,6 +37,8 @@ export type NextObstacleContext = ObstacleDecisionState & {
 /** Minimal state sent to Jev for one obstacle. */
 export type DecideState = {
   speed: number;
+  /** Speed expected when the action executes (after lead runway). */
+  predicted_speed?: number;
   dinosaur_motion: DinosaurMotion;
   obstacle: ObstacleDecisionState;
   next_obstacle: NextObstacleContext | null;
@@ -208,9 +210,14 @@ export function maneuverToPresses(action: Maneuver): {
 export function buildManeuverState(state: DecideState) {
   const likely = likelyManeuverFor(state.obstacle.flight_path);
   const chosen = state.chosen_maneuver ?? null;
+  const predicted =
+    typeof state.predicted_speed === "number"
+      ? state.predicted_speed
+      : state.speed;
   return {
     objective: "Avoid the target obstacle and keep the dinosaur alive.",
     current_speed: Number(state.speed.toFixed(2)),
+    predicted_speed_at_action: Number(predicted.toFixed(2)),
     dinosaur_motion_when_observed: state.dinosaur_motion,
     target_obstacle: {
       kind: state.obstacle.kind,
@@ -232,15 +239,16 @@ export function buildManeuverState(state: DecideState) {
           ),
           is_tight_follow_up:
             state.next_obstacle.seconds_until_next <= TIGHT_NEXT_SECONDS,
+          is_ultra_tight_stack:
+            state.next_obstacle.seconds_until_next <= ULTRA_TIGHT_SECONDS,
         }
       : null,
     timing_policy: [
       "The current motion is transient. Browser code will finish it and",
       "execute the chosen maneuver at the safe proximity for the current speed.",
-      "Choose only the maneuver for the target obstacle. A parallel call asks",
-      "whether to use a short or full recovery so the dinosaur can return to a",
-      "neutral run ready for next_obstacle. next_obstacle is context for that",
-      "recovery, not a second action to plan here.",
+      "Use predicted_speed_at_action for timing judgment: higher speed closes",
+      "gaps faster, so ultra-tight stacks often need a full jump to clear both,",
+      "while moderate gaps favor a short hop or brief duck to recover for next.",
     ].join(" "),
   };
 }
@@ -296,24 +304,28 @@ export function buildJumpProfileQuestions() {
         "Choose short or full recovery for the target obstacle.",
         "Use chosen_maneuver when present; otherwise use likely_maneuver",
         "(duck for mid birds, jump for ground hazards / low birds).",
-        "When next_obstacle.is_tight_follow_up is true, prefer short so the",
-        "dinosaur returns to a neutral run in time for the next jump or duck.",
+        "Factor current_speed and predicted_speed_at_action: at high speed,",
+        "the same gap_px closes faster.",
+        "When next_obstacle.is_ultra_tight_stack is true at high predicted",
+        "speed, prefer full jump so one arc clears both hazards.",
+        "When next_obstacle.is_tight_follow_up is true but not ultra-tight,",
+        "prefer short (jump-then-duck hop, or brief duck) so the dinosaur",
+        "returns to a neutral run for the next move.",
         "When next_obstacle is null or not tight, prefer full.",
       ].join(" "),
       criteria: {
         short: {
           what: [
-            "Choose short when next_obstacle.is_tight_follow_up is true and a",
-            "short recovery is safe: brief duck under a mid bird, or a short hop",
-            "over a single small cactus.",
-            "Short means stand up / land earlier for the second move.",
+            "Choose short when a moderate next gap needs a second jump or duck",
+            "soon: jump-then-duck short hop over a single small cactus, or a",
+            "brief duck under a mid bird, then stand for the follow-up.",
           ].join(" "),
         },
         full: {
           what: [
-            "Choose full when next is null/far, or the target needs maximum",
-            "clearance: large cactus, grouped cacti, low bird jumps, or any",
-            "uncertain clearance.",
+            "Choose full for maximum clearance, null/far next, large or grouped",
+            "cacti, low bird jumps, or ultra-tight stacks at high speed where",
+            "landing between hazards would fail.",
           ].join(" "),
         },
       },

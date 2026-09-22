@@ -28,6 +28,7 @@ import {
   type SemanticKind,
 } from "../lib/jev-contract";
 import { calculateActionProximityThreshold } from "../lib/timing";
+import { predictSpeed } from "./speedCurve";
 import type { Obstacle } from "./obstacles";
 import { logJevAct, logJevAsk, logJevReply } from "./jevLog";
 
@@ -107,6 +108,7 @@ type DescribedObstacle = {
 
 type DecideBody = {
   speed: number;
+  predicted_speed?: number;
   dinosaur_motion: DinosaurMotion;
   obstacle: DescribedObstacle;
   next_obstacle: (DescribedObstacle & {
@@ -139,6 +141,8 @@ export class JevController {
   private pressJump = 0;
   private pressDuck = 0;
   private jumpProfile: JumpProfile = "full";
+  /** After a short jump, hold duck mid-air until we land. */
+  private shortHopActive = false;
   private options: JevControllerOptions;
   private decideQueue: Array<() => Promise<void>> = [];
   private inFlight = 0;
@@ -227,6 +231,7 @@ export class JevController {
     this.pressJump = 0;
     this.pressDuck = 0;
     this.jumpProfile = "full";
+    this.shortHopActive = false;
     console.log(
       `%c[Jev]%c maneuver ASAP + profile when next known (max ${JEV_MAX_IN_FLIGHT} in flight)`,
       "color:#0a7;font-weight:700",
@@ -253,6 +258,7 @@ export class JevController {
     this.awaitingProfile.clear();
     this.pressJump = 0;
     this.pressDuck = 0;
+    this.shortHopActive = false;
   }
 
   /** Queue a Worker fetch; pump keeps up to JEV_MAX_IN_FLIGHT running. */
@@ -404,6 +410,17 @@ export class JevController {
     const abort = new AbortController();
     const described = this.describeObstacle(obstacle);
     const nextDescribed = this.buildNextDescribed(obstacle, snapshot);
+    const threshold = calculateActionProximityThreshold({
+      baseSpeed: BASE_SPEED,
+      currentSpeed: snapshot.speed,
+      dinosaurX: snapshot.dinosaurX,
+      obstacleWidth: obstacle.width,
+      action: "jump",
+      jumpProfile: "full",
+    });
+    const pxPerSec = Math.max(snapshot.speed, 0.1) * 60;
+    const secondsToAct = Math.max(0, (obstacle.xPos - threshold) / pxPerSec);
+    const predicted_speed = predictSpeed(snapshot.speed, secondsToAct * 1000);
 
     const ask: JevAskView = {
       speed: snapshot.speed,
@@ -433,6 +450,7 @@ export class JevController {
     };
     const body: DecideBody = {
       speed: ask.speed,
+      predicted_speed,
       dinosaur_motion: ask.dinosaur_motion,
       obstacle: described,
       next_obstacle: nextDescribed,
@@ -680,8 +698,24 @@ export class JevController {
     const nextDescribed = snapshot
       ? this.buildNextDescribed(plan.obstacle, snapshot)
       : plan.body.next_obstacle;
+    const liveSpeed = snapshot?.speed ?? plan.body.speed;
+    const threshold = calculateActionProximityThreshold({
+      baseSpeed: BASE_SPEED,
+      currentSpeed: liveSpeed,
+      dinosaurX: snapshot?.dinosaurX ?? 0,
+      obstacleWidth: plan.obstacle.width,
+      action: plan.decision?.action ?? "jump",
+      jumpProfile: plan.decision?.effectiveJumpProfile ?? "full",
+    });
+    const pxPerSec = Math.max(liveSpeed, 0.1) * 60;
+    const secondsToAct = Math.max(
+      0,
+      (plan.obstacle.xPos - threshold) / pxPerSec,
+    );
     const body: DecideBody = {
       ...plan.body,
+      speed: liveSpeed,
+      predicted_speed: predictSpeed(liveSpeed, secondsToAct * 1000),
       next_obstacle: nextDescribed,
       chosen_maneuver: plan.decision?.action ?? null,
     };
@@ -829,6 +863,15 @@ export class JevController {
     let wantJump = false;
     let wantDuck = false;
 
+    // Short hop = jump then duck mid-air until landing.
+    if (this.shortHopActive) {
+      if (snapshot.dinosaurMotion === "jumping") {
+        wantDuck = true;
+      } else {
+        this.shortHopActive = false;
+      }
+    }
+
     for (const [id, plan] of this.plans) {
       const obstacle = plan.obstacle;
       const passed =
@@ -910,6 +953,7 @@ export class JevController {
         }
         wantJump = true;
         this.jumpProfile = jumpProfile;
+        this.shortHopActive = jumpProfile === "short";
         plan.status = "executed";
         logJevAct(this.lastAction, "jump", plan.decision!, null);
       } else if (action === "duck") {

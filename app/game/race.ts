@@ -7,14 +7,13 @@ import {
   LANE_HEIGHT,
   SPECTATE_ACCEL_MULT,
   SPECTATE_ELAPSED_MULT,
-  SPECTATE_MIN_SPEED,
   SPECTATE_MS,
 } from "./constants";
 import { Dino } from "./dino";
 import { CloudField, HorizonLine } from "./horizon";
 import { JevController, type JevIoStatus, type JevSnapshot } from "./jevController";
 import { ObstacleManager } from "./obstacles";
-import { MAX_SPEED, stepSpeed } from "./speedCurve";
+import { stepSpeed } from "./speedCurve";
 import type {
   DecideResponse,
   DinosaurMotion,
@@ -289,10 +288,8 @@ export class RaceGame {
     this.clearTimer += deltaTime;
     if (spectating) this.spectateElapsedMs += deltaTime;
     // Chromium-style: nudge speed every frame toward MAX_SPEED.
+    // Spectate only accelerates a bit faster — never snap to a high floor.
     this.speed = stepSpeed(this.speed, speedDt);
-    if (spectating) {
-      this.speed = Math.min(MAX_SPEED, Math.max(this.speed, SPECTATE_MIN_SPEED));
-    }
 
     if (this.clearTimer > CLEAR_TIME_MS) {
       this.obstacles.update(deltaTime, this.speed, this.elapsedMs);
@@ -322,7 +319,11 @@ export class RaceGame {
       const duckHeld = duckKey >= 0.45;
 
       if (this.jev.jumping) {
-        this.jev.setDuck(duckHeld);
+        // Short hop is jump-then-duck; keep holding duck once min height is hit
+        // (or whenever the controller asks for duck mid-air).
+        const shortSlam =
+          this.jev.jumpProfile === "short" && this.jev.reachedMinHeight;
+        if (duckHeld || shortSlam) this.jev.setDuck(true);
       } else if (duckHeld) {
         this.jev.setDuck(true);
       } else {
@@ -358,8 +359,7 @@ export class RaceGame {
     this.winner = "jev";
     this.spectateElapsedMs = 0;
     this.duckHeld = false;
-    // Skip the early crawl — jump straight into a fast showcase stretch.
-    this.speed = Math.min(MAX_SPEED, Math.max(this.speed, SPECTATE_MIN_SPEED));
+    // Keep current speed and ramp from here — no sudden jump.
     this.captureYouLane();
     this.emit();
   }

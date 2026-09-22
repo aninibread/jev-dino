@@ -28,8 +28,10 @@ export class Dino {
   jumping = false;
   ducking = false;
   speedDrop = false;
+  /** True when the current speed-drop came from a short-hop profile. */
+  shortHopDrop = false;
   reachedMinHeight = false;
-  /** short = cut ascent at min height (jev-t-rex-runner); full = full arc. */
+  /** short = jump then duck (speed-drop); full = full arc. */
   jumpProfile: JumpProfile = "full";
   status: DinoStatus = "WAITING";
   crashed = false;
@@ -59,6 +61,7 @@ export class Dino {
     this.jumping = false;
     this.ducking = false;
     this.speedDrop = false;
+    this.shortHopDrop = false;
     this.reachedMinHeight = false;
     this.jumpProfile = "full";
     this.crashed = false;
@@ -90,6 +93,7 @@ export class Dino {
     this.reachedMinHeight = false;
     this.jumpProfile = profile === "short" ? "short" : "full";
     this.speedDrop = false;
+    this.shortHopDrop = false;
     if (this.ducking) {
       this.ducking = false;
     }
@@ -119,8 +123,13 @@ export class Dino {
 
     // Mid-air duck = fast fall, not crouch pose (still airborne).
     if (this.jumping) {
-      if (isDucking) this.setSpeedDrop();
-      else this.speedDrop = false;
+      if (isDucking) {
+        if (this.jumpProfile === "short") this.shortHopDrop = true;
+        this.setSpeedDrop();
+      } else if (!this.shortHopDrop) {
+        // Do not cancel an in-flight short-hop slam when input releases duck.
+        this.speedDrop = false;
+      }
       return;
     }
 
@@ -147,10 +156,17 @@ export class Dino {
       this.updateJump(deltaTime);
     }
 
-    // After a speed-drop landing, crouch if duck is still held (race re-applies).
+    // After a held mid-air duck landing, crouch. Short-hop drops return to a run.
     if (this.speedDrop && this.yPos === this.groundYPos) {
+      const fromShort = this.shortHopDrop;
       this.speedDrop = false;
-      this.setDuck(true);
+      this.shortHopDrop = false;
+      if (fromShort) {
+        this.ducking = false;
+        if (!this.crashed) this.setStatus("RUNNING");
+      } else {
+        this.setDuck(true);
+      }
     }
   }
 
@@ -171,9 +187,10 @@ export class Dino {
       if (this.yPos < this.minJumpHeight) {
         this.reachedMinHeight = true;
       }
-      // Short profile: cut ascent once min height is cleared (ref: jev-t-rex-runner).
+      // Short profile = jump then duck: slam down once min height is cleared.
       if (this.jumpProfile === "short" && this.reachedMinHeight) {
-        this.endJump();
+        this.shortHopDrop = true;
+        this.setSpeedDrop();
       }
     }
 
@@ -186,7 +203,7 @@ export class Dino {
         if (this.ducking) this.setStatus("DUCKING");
         else this.setStatus("RUNNING");
       }
-      // Leave speedDrop set so the grounded check can crouch this frame.
+      // Leave speedDrop set so the grounded check can finish this frame.
     }
   }
 
@@ -195,6 +212,7 @@ export class Dino {
     this.jumping = false;
     this.ducking = false;
     this.speedDrop = false;
+    this.shortHopDrop = false;
     this.setStatus("CRASHED");
   }
 
