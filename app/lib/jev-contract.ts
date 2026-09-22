@@ -258,35 +258,30 @@ export function buildManeuverQuestions() {
     maneuver: {
       type: "choice",
       instructions: [
-        "Choose the single safest maneuver for the dinosaur to avoid",
-        "the target obstacle and continue running.",
-        "Use target_obstacle.kind and flight_path. A high pterodactyl with",
-        "flight_path clears_running_dinosaur means keep_running - do not",
-        "jump or duck.",
-        "The dinosaur motion in the state is only what it was doing when the",
-        "distant obstacle was first observed; do not assume that motion will",
-        "still be active when the obstacle arrives.",
-        "Choose only the maneuver type for the target. Browser code will handle",
-        "timing, recovery length, and any later obstacle separately.",
+        "Choose jump, duck, or keep_running for target_obstacle.",
+        "Read target_obstacle.kind, group_size, flight_path, and width_px.",
+        "Use likely_maneuver as a hint from flight_path.",
+        "dinosaur_motion_when_observed is only what the dinosaur was doing when",
+        "the obstacle was first seen; do not assume it is still true at action.",
+        "timing_policy: browser code times the maneuver; you only choose which.",
       ].join(" "),
       criteria: {
         jump: {
           what: [
-            "Jump over a small_cactus or large_cactus ground hazard, or a low",
-            "pterodactyl whose path blocks both running and ducking.",
+            "flight_path is ground_hazard, or flight_path is",
+            "blocks_running_and_ducking (low pterodactyl).",
           ].join(" "),
         },
         duck: {
           what: [
-            "Duck under a mid-height pterodactyl whose path blocks running but",
-            "leaves safe space while ducking.",
+            "flight_path is blocks_running_only (mid pterodactyl): ducking is",
+            "safe, running is not.",
           ].join(" "),
         },
         keep_running: {
           what: [
-            "Keep running with no jump or duck when the obstacle clears the",
-            "running dinosaur - typically a high pterodactyl",
-            "(flight_path clears_running_dinosaur).",
+            "flight_path is clears_running_dinosaur (high pterodactyl): neither",
+            "jump nor duck; keep running.",
           ].join(" "),
         },
       },
@@ -296,28 +291,38 @@ export function buildManeuverQuestions() {
 
 /**
  * Recovery profile after a maneuver is chosen.
- * Soft guidance: short for a close next; full when far or a tight wide stack.
+ * Soft guidance aligned to next_obstacles fields in state.
  */
 export function buildJumpProfileQuestions() {
   return {
     jump_profile: {
       type: "choice",
       instructions: [
-        "Choose short or full recovery for the maneuver just taken.",
-        "Use current_speed and next_obstacles (kind, path, width, gap).",
-        "Lean short when the next obstacle is fairly close and earlier recovery",
-        "helps a second move, including when the next path clears a running",
-        "dinosaur so you should land before it rather than stay airborne.",
-        "Lean full when the next gap is comfortable, or when the next two look",
-        "packed and wide so landing between them is risky.",
-        "Prefer full when unsure.",
+        "Choose short or full recovery for maneuver on target_obstacle.",
+        "Read current_speed, maneuver, target_obstacle, and next_obstacles",
+        "(up to two entries with kind, group_size, flight_path, width_px,",
+        "gap_px, seconds_until_next).",
+        "Lean short when next_obstacles[0] has a small gap_px /",
+        "seconds_until_next and earlier recovery helps the next move,",
+        "including when next_obstacles[0].flight_path is",
+        "clears_running_dinosaur so you should land before it.",
+        "Lean full when next_obstacles is empty or the first gap is comfortable,",
+        "or when next_obstacles[0] and next_obstacles[1] have small gaps and",
+        "large width_px / group_size so landing between them is risky.",
+        "Prefer full when unsure. timing_policy: browser times short duck-after-clear.",
       ].join(" "),
       criteria: {
         short: {
-          what: "Earlier recovery when the next obstacle is close enough to matter.",
+          what: [
+            "next_obstacles[0] is close enough (gap_px / seconds_until_next)",
+            "that earlier recovery helps.",
+          ].join(" "),
         },
         full: {
-          what: "Safer hold when the next gap is fine, or a tight wide follow-up stack.",
+          what: [
+            "next_obstacles is empty or far, or the next two look packed and",
+            "wide (width_px / group_size) so a short recovery is risky.",
+          ].join(" "),
         },
       },
     },
