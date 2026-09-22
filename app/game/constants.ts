@@ -9,7 +9,7 @@ export const GAME_DURATION_MS = 60_000;
  * After the player crashes, keep Jev running this long (wall-clock).
  * Spectate eases acceleration up so speed climbs faster without a snap.
  */
-export const SPECTATE_MS = 12_000;
+export const SPECTATE_MS = 30_000;
 /** Spectate accel multiplier at crash (near normal). */
 export const SPECTATE_ACCEL_MULT_START = 1.8;
 /** Spectate accel multiplier after the ease-in finishes. */
