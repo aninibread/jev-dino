@@ -214,7 +214,7 @@ export function buildManeuverState(state: DecideState) {
   };
 }
 
-/** Profile ask: target + gap to next only (not what the next obstacle is). */
+/** Profile ask: target + gap + next flight path (not next kind/size). */
 export function buildJumpProfileState(state: DecideState) {
   const next = state.next_obstacle;
   return {
@@ -231,6 +231,7 @@ export function buildJumpProfileState(state: DecideState) {
     seconds_until_next: next
       ? Number(next.seconds_until_next.toFixed(3))
       : null,
+    next_flight_path: next ? next.flight_path : null,
     timing_policy:
       "Browser code times any short-jump duck-after-clear. You only pick short vs full.",
   };
@@ -275,8 +276,8 @@ export function buildManeuverQuestions() {
 }
 
 /**
- * Recovery profile. Prefer full; short when the gap to the next obstacle
- * is close enough that earlier recovery helps.
+ * Recovery profile. Prefer full; short when the gap is close enough that
+ * earlier recovery helps for the follow-up path.
  */
 export function buildJumpProfileQuestions() {
   return {
@@ -285,9 +286,9 @@ export function buildJumpProfileQuestions() {
       instructions: [
         "Choose short or full recovery. Prefer full.",
         "Use chosen_maneuver when present, else likely_maneuver.",
-        "Short when gap_to_next_px / seconds_until_next is close enough",
-        "that you need to recover for a second move soon; otherwise full",
-        "(including when gap fields are null).",
+        "Use gap_to_next_px / seconds_until_next and next_flight_path",
+        "(what the follow-up blocks) to decide if you need earlier recovery",
+        "for a second jump or duck soon. Otherwise full (including null gap).",
       ].join(" "),
       criteria: {
         short: {
