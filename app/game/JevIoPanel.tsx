@@ -145,9 +145,9 @@ export function JevIoPanel({
     decision?.action === "jump" ? decision.jump_profile : null;
   const profileSum =
     (profileProbs.short ?? 0) + (profileProbs.full ?? 0);
-  // Only show after the second call has probabilities (or a chosen profile).
   const showProfileBars =
-    decision?.action === "jump" && profileSum > 0.01;
+    (decision?.action === "jump" || decision?.action === "duck") &&
+    profileSum > 0.01;
   const next = ask?.next_obstacle ?? null;
   const nextLabel = next
     ? `${labelKind(next.kind)} ${labelGroup(next.group)}`

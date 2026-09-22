@@ -35,9 +35,10 @@ export const JEV_ASK_LEAD_SECONDS = 4.0;
 export const JEV_MAX_OFFSCREEN = 5;
 /**
  * Max concurrent browser→Worker Jev fetches (maneuver + profile share this).
- * Keep this high enough to prefetch the off-screen queue without stampeding.
+ * Each obstacle fires both asks in parallel, so keep this high enough to
+ * prefetch the off-screen queue without stampeding.
  */
-export const JEV_MAX_IN_FLIGHT = 6;
+export const JEV_MAX_IN_FLIGHT = 8;
 /** Browser fetch budget for /api/jev-decide (must exceed server AI timeout). */
 export const JEV_CLIENT_TIMEOUT_MS = 8_000;
 /** Workers AI abort budget inside the decide handler. */

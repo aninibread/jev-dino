@@ -47,11 +47,11 @@ export function logJevReply(
         ? "#06c"
         : "#666";
   const profile =
-    decision.action === "jump"
+    decision.action === "jump" || decision.action === "duck"
       ? ` ${decision.effectiveJumpProfile ?? decision.jump_profile}`
       : "";
   const profileBars =
-    decision.action === "jump"
+    decision.action === "jump" || decision.action === "duck"
       ? ` short=${pct(decision.profile_probabilities?.short ?? 0)} full=${pct(decision.profile_probabilities?.full ?? 0)}`
       : "";
   console.log(

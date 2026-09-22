@@ -207,14 +207,15 @@ export function buildManeuverState(state: DecideState) {
     timing_policy: [
       "The current motion is transient. Browser code will finish it and",
       "execute the chosen maneuver at the safe proximity for the current speed.",
-      "Choose only the maneuver for the target obstacle. Jump height is asked",
-      "in a follow-up call only if this call chooses jump. next_obstacle is",
-      "context for that follow-up, not a second action to plan here.",
+      "Choose only the maneuver for the target obstacle. A parallel call asks",
+      "whether to use a short or full recovery so the dinosaur can return to a",
+      "neutral run ready for next_obstacle. next_obstacle is context for that",
+      "recovery, not a second action to plan here.",
     ].join(" "),
   };
 }
 
-/** First Jev call: maneuver only. */
+/** Maneuver call (fired in parallel with jump_profile). */
 export function buildManeuverQuestions() {
   return {
     maneuver: {
@@ -226,7 +227,7 @@ export function buildManeuverQuestions() {
         "distant obstacle was first observed; do not assume that motion will",
         "still be active when the obstacle arrives.",
         "Choose only the maneuver type for the target. Browser code will handle",
-        "timing, jump height, and any later obstacle separately.",
+        "timing, recovery length, and any later obstacle separately.",
       ].join(" "),
       criteria: {
         jump: {
@@ -252,34 +253,38 @@ export function buildManeuverQuestions() {
   };
 }
 
-/** Second Jev call: jump profile only (after maneuver chose jump). */
+/**
+ * Recovery profile (fired in parallel with maneuver).
+ * short = get back to a neutral run sooner for the next jump/duck;
+ * full = commit to the safer longer hop or duck hold.
+ */
 export function buildJumpProfileQuestions() {
   return {
     jump_profile: {
       type: "choice",
       instructions: [
-        "The safest maneuver for the target obstacle is already jump.",
-        "Choose the jump trajectory that best clears it and still leaves the",
-        "dinosaur ready for whatever comes next.",
-        "If next_obstacle.is_tight_follow_up is true and the next hazard also",
-        "needs a jump or duck soon, prefer a short hop when the target is a",
-        "single small cactus so the dinosaur lands earlier.",
-        "Browser code will calculate the exact launch time from the game speed.",
+        "Assume the dinosaur will either jump or duck the target obstacle.",
+        "Choose a short or full recovery so it can return to a neutral running",
+        "pose in time for next_obstacle when needed.",
+        "If next_obstacle.is_tight_follow_up is true and the next hazard will",
+        "also need a jump or duck soon, prefer short so the dinosaur is ready",
+        "for that second move.",
+        "Browser code will calculate exact launch or duck timing from speed.",
       ].join(" "),
       criteria: {
         short: {
           what: [
-            "Use only for one small cactus.",
-            "Prefer short when a tight next_obstacle follows that will need",
-            "another jump or duck soon after landing.",
-            "Do not use for a large cactus, grouped cacti, or a pterodactyl.",
+            "Prefer when a tight next_obstacle follows that needs another jump",
+            "or duck soon: short hop (single small cactus) or brief duck so the",
+            "dinosaur stands up earlier.",
+            "Do not use a short hop for a large cactus, grouped cacti, or a",
+            "pterodactyl jump.",
           ].join(" "),
         },
         full: {
           what: [
-            "Use maximum safe airtime for every large cactus, grouped cactus,",
-            "pterodactyl, uncertain obstacle, or when the next hazard is far",
-            "or null.",
+            "Use the safer longer hop or duck hold when the next hazard is far,",
+            "null, uncertain, or the target needs maximum clearance.",
           ].join(" "),
         },
       },
