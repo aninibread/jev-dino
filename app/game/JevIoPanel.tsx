@@ -146,34 +146,32 @@ export function JevIoPanel({
       <div className="jev-io-grid">
         <div className="jev-io-col">
           <h3>Input</h3>
-          {ask ? (
-            <dl className="jev-io-facts">
-              <div>
-                <dt>Obstacle</dt>
-                <dd>
-                  {labelKind(ask.obstacle.kind)} {labelGroup(ask.obstacle.group)}
-                </dd>
-              </div>
-              <div>
-                <dt>Path</dt>
-                <dd>{labelFlightPath(ask.obstacle.flight_path)}</dd>
-              </div>
-              <div>
-                <dt>Width</dt>
-                <dd>{ask.obstacle.width_px}px</dd>
-              </div>
-              <div>
-                <dt>Speed</dt>
-                <dd>{ask.speed.toFixed(1)}</dd>
-              </div>
-              <div>
-                <dt>Motion at ask</dt>
-                <dd>{labelMotion(ask.dinosaur_motion)}</dd>
-              </div>
-            </dl>
-          ) : (
-            <p className="jev-io-empty">No ask yet. Start a race.</p>
-          )}
+          <dl className="jev-io-facts">
+            <div>
+              <dt>Obstacle</dt>
+              <dd>
+                {ask
+                  ? `${labelKind(ask.obstacle.kind)} ${labelGroup(ask.obstacle.group)}`
+                  : "–"}
+              </dd>
+            </div>
+            <div>
+              <dt>Path</dt>
+              <dd>{ask ? labelFlightPath(ask.obstacle.flight_path) : "–"}</dd>
+            </div>
+            <div>
+              <dt>Width</dt>
+              <dd>{ask ? `${ask.obstacle.width_px}px` : "–"}</dd>
+            </div>
+            <div>
+              <dt>Speed</dt>
+              <dd>{ask ? ask.speed.toFixed(1) : "–"}</dd>
+            </div>
+            <div>
+              <dt>Motion at ask</dt>
+              <dd>{ask ? labelMotion(ask.dinosaur_motion) : "–"}</dd>
+            </div>
+          </dl>
         </div>
 
         <div className="jev-io-col">
