@@ -25,6 +25,12 @@ export const INITIAL_JUMP_VELOCITY = 12;
 export const SPEED_DROP_COEFFICIENT = 3;
 
 export const CLEAR_TIME_MS = 4000;
+/**
+ * Extra off-screen runway (in seconds of travel at current speed) before an
+ * obstacle reaches the visible canvas. Jev is asked as soon as the obstacle is
+ * created, so this is the main lever for Workers AI latency.
+ */
+export const JEV_ASK_LEAD_SECONDS = 2.25;
 
 export const SPRITE_LDPI = {
   CACTUS_LARGE: { x: 332, y: 2 },

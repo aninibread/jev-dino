@@ -1,6 +1,7 @@
 import {
   DEFAULT_WIDTH,
   FPS,
+  JEV_ASK_LEAD_SECONDS,
   OBSTACLE_TYPES,
   SPRITE_LDPI,
   type Box,
@@ -16,6 +17,12 @@ import {
 
 function rand(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+/** Pixels of off-screen lead so Jev gets asked well before proximity timing. */
+export function askLeadPixels(speed: number): number {
+  const safeSpeed = Math.max(Number(speed) || 0, 6);
+  return Math.round(safeSpeed * FPS * JEV_ASK_LEAD_SECONDS);
 }
 
 let nextObstacleId = 1;
@@ -40,14 +47,14 @@ export class Obstacle {
     speed: number,
     gapCoefficient: number,
     elapsedMs: number,
-    xOffset = 0,
+    xPos = DEFAULT_WIDTH,
   ) {
     this.id = `obs-${nextObstacleId++}`;
     this.typeConfig = typeConfig;
     this.size = rand(1, maxObstacleSize(speed));
     if (this.size > 1 && typeConfig.multipleSpeed > speed) this.size = 1;
     this.width = typeConfig.width * this.size;
-    this.xPos = DEFAULT_WIDTH + xOffset;
+    this.xPos = xPos;
 
     if (Array.isArray(typeConfig.yPos)) {
       const idx = birdHeightIndex(elapsedMs, typeConfig.yPos.length);
@@ -163,19 +170,22 @@ export class ObstacleManager {
     }
     this.obstacles = this.obstacles.filter((o) => !o.remove);
 
+    const lead = askLeadPixels(speed);
+    const spawnHorizon = DEFAULT_WIDTH + lead;
+
     if (this.obstacles.length > 0) {
       const last = this.obstacles[this.obstacles.length - 1]!;
-      if (
-        last.xPos + last.width + last.gap < DEFAULT_WIDTH &&
-        !this.followingObstacleCreated
-      ) {
-        this.addNewObstacle(speed, elapsedMs);
+      const nextX = last.xPos + last.width + last.gap;
+      // Create the next obstacle while it is still far off-screen so Jev's
+      // ask starts ~JEV_ASK_LEAD_SECONDS before the visible approach.
+      if (nextX < spawnHorizon && !this.followingObstacleCreated) {
+        this.addNewObstacle(speed, elapsedMs, nextX);
         this.followingObstacleCreated = true;
-      } else if (last.xPos + last.width + last.gap >= DEFAULT_WIDTH) {
+      } else if (nextX >= spawnHorizon) {
         this.followingObstacleCreated = false;
       }
     } else {
-      this.addNewObstacle(speed, elapsedMs);
+      this.addNewObstacle(speed, elapsedMs, spawnHorizon);
     }
   }
 
@@ -218,12 +228,11 @@ export class ObstacleManager {
     return small;
   }
 
-  addNewObstacle(speed: number, elapsedMs: number) {
+  addNewObstacle(speed: number, elapsedMs: number, xPos?: number) {
     const type = this.pickType(speed, elapsedMs);
     const coeff = gapCoefficientFor(elapsedMs);
-    // Extra runway for the very first obstacle of a race.
-    const xOffset = this.obstacles.length === 0 ? 280 : 0;
-    this.obstacles.push(new Obstacle(type, speed, coeff, elapsedMs, xOffset));
+    const spawnX = xPos ?? DEFAULT_WIDTH + askLeadPixels(speed);
+    this.obstacles.push(new Obstacle(type, speed, coeff, elapsedMs, spawnX));
     this.history.unshift(type.type);
     if (this.history.length > MAX_OBSTACLE_DUPLICATION) {
       this.history.length = MAX_OBSTACLE_DUPLICATION;

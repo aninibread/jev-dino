@@ -18,10 +18,10 @@ function pct(n: number): string {
 }
 
 function statusLabel(status: JevIoStatus): string {
-  if (status === "thinking") return "Asking Jev…";
+  if (status === "thinking") return "Asking Jev...";
   if (status === "ready") return "Plan ready";
   if (status === "skipped") return "Skipped (low confidence)";
-  if (status === "late") return "Late — skipped";
+  if (status === "late") return "Too late, skipped";
   if (status === "error") return "Request failed";
   return "Waiting for obstacles";
 }
@@ -86,7 +86,7 @@ export function JevIoPanel({
               </div>
             </dl>
           ) : (
-            <p className="jev-io-empty">No ask yet — start a race.</p>
+            <p className="jev-io-empty">No ask yet. Start a race.</p>
           )}
         </div>
 
@@ -141,7 +141,7 @@ export function JevIoPanel({
               </dl>
             </>
           ) : ask && status === "thinking" ? (
-            <p className="jev-io-empty">Waiting on Workers AI…</p>
+            <p className="jev-io-empty">Waiting on Workers AI...</p>
           ) : (
             <p className="jev-io-empty">No reply yet.</p>
           )}

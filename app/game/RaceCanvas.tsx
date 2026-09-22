@@ -94,7 +94,7 @@ export function RaceCanvas({
       </div>
 
       {!ready && !error && (
-        <p className="race-status muted">Loading track…</p>
+        <p className="race-status muted">Loading track...</p>
       )}
       {error && <p className="error-card">{error}</p>}
 

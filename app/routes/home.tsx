@@ -4,7 +4,7 @@ import type { Winner } from "../game/race";
 
 export function meta() {
   return [
-    { title: "Dino — Race Jev" },
+    { title: "Dino - Race Jev" },
     {
       name: "description",
       content: "Race the Chrome dinosaur against Jev. Sixty seconds. Don’t blink.",
