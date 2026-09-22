@@ -57,13 +57,15 @@ export function calculateActionProximityThreshold({
  * Short-jump early drop is code-owned: only slam once the target's trailing
  * edge has scrolled past the dinosaur. Higher speed clears the same width
  * sooner automatically (obstacles move faster); no Jev timing parameter.
+ * Keep the gate tight (no extra margin) so the faster short slam can start
+ * as soon as the width is clear.
  */
 export function obstacleClearedForShortDrop({
   dinosaurX,
   obstacleX,
   obstacleWidth,
   /** Extra px past the dino's left edge before slamming (hitbox slack). */
-  marginPx = 2,
+  marginPx = 0,
 }: {
   dinosaurX: number;
   obstacleX: number;

@@ -36,7 +36,17 @@ export function spectateAccelMult(spectateElapsedMs: number): number {
 export const BASE_SPEED = 6;
 export const GRAVITY = 0.6;
 export const INITIAL_JUMP_VELOCITY = 12;
+/** Mid-air duck fall multiplier (player / full-jump speed-drop). */
 export const SPEED_DROP_COEFFICIENT = 3;
+/**
+ * Short-hop recovery slam: harder than a normal speed-drop so we still clear
+ * the target, then hit the ground sooner for the next obstacle.
+ */
+export const SHORT_SPEED_DROP_COEFFICIENT = 5;
+/** Initial downward velocity when a short hop starts its post-clear slam. */
+export const SHORT_SPEED_DROP_VELOCITY = 12;
+/** Normal mid-air duck slam velocity (Chromium uses 1; we push harder). */
+export const SPEED_DROP_VELOCITY = 8;
 
 export const CLEAR_TIME_MS = 4000;
 /**
