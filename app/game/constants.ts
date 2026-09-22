@@ -65,7 +65,7 @@ export const JEV_CLIENT_TIMEOUT_MS = JEV_ATTEMPT_TIMEOUT_MS * JEV_MAX_ATTEMPTS;
 /** Workers AI abort budget inside the decide handler (under one attempt). */
 export const JEV_SERVER_TIMEOUT_MS = 2_500;
 /**
- * Prefer waiting briefly for next_obstacle before the profile call, but never
+ * Prefer waiting briefly for next_obstacles before the profile call, but never
  * delay the maneuver ask. Maneuvers fire as soon as the obstacle is seen.
  */
 export const JEV_ASK_DEADLINE_SECONDS = 1.6;

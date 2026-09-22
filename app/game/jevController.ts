@@ -78,7 +78,7 @@ type Plan = {
   status: PlanStatus;
   abort: AbortController;
   requestedAt: number;
-  /** Maneuver body; next_obstacle may be refreshed for the profile call. */
+  /** Maneuver body; next_obstacles may be refreshed for the profile call. */
   body: DecideBody;
   decision?: DecideResponse & { effectiveJumpProfile: JumpProfile };
   maneuverDurationMs?: number;
