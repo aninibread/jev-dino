@@ -2,10 +2,7 @@ import {
   BOTTOM_PAD,
   GRAVITY,
   LANE_HEIGHT,
-  SHORT_SPEED_DROP_COEFFICIENT,
-  SHORT_SPEED_DROP_VELOCITY,
   SPEED_DROP_COEFFICIENT,
-  SPEED_DROP_VELOCITY,
   SPRITE_LDPI,
   TREX,
   TREX_BOXES,
@@ -19,8 +16,8 @@ export type DinoStatus = "WAITING" | "RUNNING" | "JUMPING" | "DUCKING" | "CRASHE
 /**
  * Chromium T-rex duck behavior (offline.js):
  * - Grounded: switch to DUCKING sprite/hitbox immediately.
- * - Mid-air: setSpeedDrop() — jumpVelocity slam + fall multiplier, then duck on land.
- * - Short hop: stronger slam after width-clear so we land ready for the next ask.
+ * - Mid-air: setSpeedDrop() — jumpVelocity = 1, fall 3× fast, then duck on land.
+ *   Same speed-drop for player and Jev (short only changes *when* duck is pressed).
  */
 export type JumpProfile = "short" | "full";
 
@@ -117,10 +114,9 @@ export class Dino {
   setSpeedDrop(fromShortHop = false) {
     this.speedDrop = true;
     this.shortHopDrop = fromShortHop || this.jumpProfile === "short";
-    // Short hops slam harder so we clear, then recover sooner for the next obstacle.
-    this.jumpVelocity = this.shortHopDrop
-      ? SHORT_SPEED_DROP_VELOCITY
-      : SPEED_DROP_VELOCITY;
+    // Chromium uses 1; that feels like a pause mid-air. Push harder so the
+    // body drops in a few frames, then crouch on land. Same for player + Jev.
+    this.jumpVelocity = 8;
     this.reachedMinHeight = true;
   }
 
@@ -177,14 +173,10 @@ export class Dino {
 
     if (this.speedDrop) {
       // Fall only — never re-apply endJump/-5 which can fight the slam.
-      const dropCoeff = this.shortHopDrop
-        ? SHORT_SPEED_DROP_COEFFICIENT
-        : SPEED_DROP_COEFFICIENT;
-      const dropGravity = this.shortHopDrop ? GRAVITY * 2.2 : GRAVITY * 1.5;
       this.yPos += Math.round(
-        this.jumpVelocity * dropCoeff * framesElapsed,
+        this.jumpVelocity * SPEED_DROP_COEFFICIENT * framesElapsed,
       );
-      this.jumpVelocity += dropGravity * framesElapsed;
+      this.jumpVelocity += GRAVITY * 1.5 * framesElapsed;
       this.reachedMinHeight = true;
     } else {
       this.yPos += Math.round(this.jumpVelocity * framesElapsed);
@@ -192,8 +184,8 @@ export class Dino {
       if (this.yPos < this.minJumpHeight) {
         this.reachedMinHeight = true;
       }
-      // Short profile stays in a normal arc until the controller ducks after
-      // the obstacle width has cleared (see obstacleClearedForShortDrop).
+      // Short profile stays in a normal arc until the controller ducks earlier
+      // (see obstacleClearedForShortDrop) — same fall physics as a player duck.
     }
 
     if (this.yPos > this.groundYPos) {
