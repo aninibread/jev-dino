@@ -115,7 +115,8 @@ type DecideBody = {
     gap_px: number;
     seconds_until_next: number;
   }) | null;
-  chosen_maneuver?: DecideResponse["action"] | null;
+  /** Maneuver already taken for this obstacle (profile ask). */
+  maneuver?: DecideResponse["action"] | null;
 };
 
 /**
@@ -128,7 +129,7 @@ type DecideBody = {
 export class JevController {
   private frameHook: number | null = null;
   private seen = new Set<string>();
-  /** Seen; waiting to fire profile once next (or deadline) is known. */
+  /** Seen; waiting to fire profile once maneuver + next (or deadline) are known. */
   private awaitingProfile = new Set<string>();
   private plans = new Map<string, Plan>();
   /** Spawn order — head is the obstacle Jev is currently working. */
@@ -376,8 +377,8 @@ export class JevController {
   }
 
   /**
-   * Fire profile as soon as next_obstacle is known (or the ask deadline hits),
-   * so the profile ask can include gap + next flight path.
+   * Fire profile once the maneuver is known and next_obstacle is available
+   * (or the ask deadline hits).
    */
   private flushProfileAsks(snapshot: JevSnapshot) {
     for (const id of [...this.awaitingProfile]) {
@@ -396,6 +397,9 @@ export class JevController {
         continue;
       }
 
+      // Need the maneuver we just took before asking for recovery profile.
+      if (!plan.decision) continue;
+
       const obstacle = snapshot.obstacles.find((o) => o.id === id) ?? plan.obstacle;
       const next = this.findNextObstacle(obstacle, snapshot);
       const threshold = calculateActionProximityThreshold({
@@ -403,7 +407,7 @@ export class JevController {
         currentSpeed: snapshot.speed,
         dinosaurX: snapshot.dinosaurX,
         obstacleWidth: obstacle.width,
-        action: plan.decision?.action ?? "jump",
+        action: plan.decision.action,
         jumpProfile: "full",
       });
       const pxPerSec = Math.max(snapshot.speed, 0.1) * 60;
@@ -713,7 +717,7 @@ export class JevController {
   }
 
   private async fetchJumpProfile(plan: Plan, attempt = 0): Promise<void> {
-    // Refresh next + pass chosen_maneuver so Jev can size recovery for chains.
+    // Refresh next + pass the maneuver just taken for recovery sizing.
     const snapshot = this.options.getSnapshot();
     const nextDescribed = snapshot
       ? this.buildNextDescribed(plan.obstacle, snapshot)
@@ -723,7 +727,7 @@ export class JevController {
       ...plan.body,
       speed: liveSpeed,
       next_obstacle: nextDescribed,
-      chosen_maneuver: plan.decision?.action ?? null,
+      maneuver: plan.decision?.action ?? null,
     };
     if (body.next_obstacle) {
       const n = body.next_obstacle;
