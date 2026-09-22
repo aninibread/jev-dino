@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { formatJevCostUsd } from "../lib/jev-cost";
 import { JevIoPanel } from "./JevIoPanel";
 import { RaceGame, type RaceSnapshot, type Winner } from "./race";
 
@@ -79,6 +80,13 @@ export function RaceCanvas({
 
   return (
     <div className={`race-stage phase-${phase}`}>
+      <div
+        className="race-cost"
+        aria-live="polite"
+        title="Estimated from typesafe/jev input tokens at $0.042 / 1M tokens (TypeSafe published rate; Workers AI dashboard may differ)."
+      >
+        ~{formatJevCostUsd(snapshot?.jevCostUsd ?? 0)}
+      </div>
       <div className="race-frame">
         <canvas
           ref={canvasRef}

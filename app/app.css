@@ -107,6 +107,18 @@ a:focus-visible {
   width: 100%;
 }
 
+.race-cost {
+  width: 100%;
+  max-width: 600px;
+  padding: 0 2px;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: right;
+}
+
 .race-frame {
   position: relative;
   width: 100%;
@@ -552,6 +564,11 @@ a:focus-visible {
 
   .race-stage {
     gap: 10px;
+  }
+
+  .race-cost {
+    max-width: none;
+    width: calc(100% - 24px);
   }
 
   .race-frame {

@@ -57,9 +57,16 @@ export type JevIoView = {
   profileError?: string | null;
 };
 
+export type JevRoundCost = {
+  asks: number;
+  inputTokens: number;
+  costUsd: number;
+};
+
 export type JevControllerOptions = {
   getSnapshot: () => JevSnapshot | null;
   onIo: (view: JevIoView) => void;
+  onCost?: (cost: JevRoundCost) => void;
 };
 
 type PlanStatus =
@@ -154,6 +161,9 @@ export class JevController {
   private options: JevControllerOptions;
   private decideQueue: Array<() => Promise<void>> = [];
   private inFlight = 0;
+  private roundAsks = 0;
+  private roundInputTokens = 0;
+  private roundCostUsd = 0;
   running = false;
 
   constructor(options: JevControllerOptions) {
@@ -182,6 +192,33 @@ export class JevController {
       duck: this.pressDuck,
       jumpProfile: this.jumpProfile,
     };
+  }
+
+  get roundCost(): JevRoundCost {
+    return {
+      asks: this.roundAsks,
+      inputTokens: this.roundInputTokens,
+      costUsd: this.roundCostUsd,
+    };
+  }
+
+  private recordUsage(usage?: {
+    input_tokens?: number;
+    cost_usd?: number;
+  } | null) {
+    const tokens =
+      typeof usage?.input_tokens === "number" &&
+      Number.isFinite(usage.input_tokens)
+        ? Math.max(0, usage.input_tokens)
+        : 400;
+    const cost =
+      typeof usage?.cost_usd === "number" && Number.isFinite(usage.cost_usd)
+        ? Math.max(0, usage.cost_usd)
+        : (tokens / 1_000_000) * 0.042;
+    this.roundAsks += 1;
+    this.roundInputTokens += tokens;
+    this.roundCostUsd += cost;
+    this.options.onCost?.(this.roundCost);
   }
 
   private emitIo(
@@ -301,6 +338,10 @@ export class JevController {
     this.pressDuck = 0;
     this.jumpProfile = "full";
     this.shortHopObstacle = null;
+    this.roundAsks = 0;
+    this.roundInputTokens = 0;
+    this.roundCostUsd = 0;
+    this.options.onCost?.(this.roundCost);
     console.log(
       `%c[Jev]%c FIFO plan queue; max ${JEV_MAX_IN_FLIGHT} fetches in flight`,
       "color:#0a7;font-weight:700",
@@ -574,6 +615,10 @@ export class JevController {
         return;
       }
 
+      if (decision.source === "jev") {
+        this.recordUsage(decision.usage);
+      }
+
       // Soft server failure — retry while attempts remain instead of skipping.
       if (
         (decision.source === "none" ||
@@ -771,9 +816,17 @@ export class JevController {
         profile_probabilities?: JumpProfileProbabilities;
         durationMs?: number;
         source?: string;
+        usage?: {
+          input_tokens?: number;
+          cost_usd?: number;
+        };
       };
       if (!this.running) return;
       if (this.plans.get(plan.obstacleId) !== plan) return;
+
+      if (result.source === "jev") {
+        this.recordUsage(result.usage);
+      }
 
       if (result.source === "none" && attempt + 1 < JEV_MAX_ATTEMPTS) {
         throw new Error("empty profile response");
