@@ -232,7 +232,7 @@ export async function decideJumpProfileWithJev(
   const result = await ai.run(
     "typesafe/jev",
     {
-      state: buildManeuverState(state),
+      state: buildJumpProfileState(state),
       questions: buildJumpProfileQuestions(),
     },
     {

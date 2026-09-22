@@ -200,8 +200,6 @@ export function maneuverToPresses(action: Maneuver): {
 }
 
 export function buildManeuverState(state: DecideState) {
-  const likely = likelyManeuverFor(state.obstacle.flight_path);
-  const chosen = state.chosen_maneuver ?? null;
   return {
     objective: "Avoid the target obstacle and keep the dinosaur alive.",
     dinosaur_motion_when_observed: state.dinosaur_motion,
@@ -211,22 +209,30 @@ export function buildManeuverState(state: DecideState) {
       flight_path: state.obstacle.flight_path,
       width_px: state.obstacle.width_px,
     },
-    likely_maneuver: likely,
-    chosen_maneuver: chosen,
-    next_obstacle: state.next_obstacle
-      ? {
-          kind: state.next_obstacle.kind,
-          group_size: state.next_obstacle.group,
-          flight_path: state.next_obstacle.flight_path,
-          width_px: state.next_obstacle.width_px,
-          gap_px: state.next_obstacle.gap_px,
-          seconds_until_next: Number(
-            state.next_obstacle.seconds_until_next.toFixed(3),
-          ),
-        }
+    likely_maneuver: likelyManeuverFor(state.obstacle.flight_path),
+    timing_policy: "Browser code times the maneuver.",
+  };
+}
+
+/** Profile ask: target + gap to next only (not what the next obstacle is). */
+export function buildJumpProfileState(state: DecideState) {
+  const next = state.next_obstacle;
+  return {
+    objective: "Choose short or full recovery for the target maneuver.",
+    target_obstacle: {
+      kind: state.obstacle.kind,
+      group_size: state.obstacle.group,
+      flight_path: state.obstacle.flight_path,
+      width_px: state.obstacle.width_px,
+    },
+    likely_maneuver: likelyManeuverFor(state.obstacle.flight_path),
+    chosen_maneuver: state.chosen_maneuver ?? null,
+    gap_to_next_px: next ? next.gap_px : null,
+    seconds_until_next: next
+      ? Number(next.seconds_until_next.toFixed(3))
       : null,
     timing_policy:
-      "Browser code times the maneuver and any short-jump duck-after-clear.",
+      "Browser code times any short-jump duck-after-clear. You only pick short vs full.",
   };
 }
 
@@ -269,8 +275,8 @@ export function buildManeuverQuestions() {
 }
 
 /**
- * Recovery profile. Prefer full; short when the next gap is close enough
- * that earlier recovery helps. Timing/eligibility stay in browser code.
+ * Recovery profile. Prefer full; short when the gap to the next obstacle
+ * is close enough that earlier recovery helps.
  */
 export function buildJumpProfileQuestions() {
   return {
@@ -279,8 +285,9 @@ export function buildJumpProfileQuestions() {
       instructions: [
         "Choose short or full recovery. Prefer full.",
         "Use chosen_maneuver when present, else likely_maneuver.",
-        "Short when next_obstacle gap is close enough that you need to",
-        "recover for a second move soon; otherwise full (including null next).",
+        "Short when gap_to_next_px / seconds_until_next is close enough",
+        "that you need to recover for a second move soon; otherwise full",
+        "(including when gap fields are null).",
       ].join(" "),
       criteria: {
         short: {
