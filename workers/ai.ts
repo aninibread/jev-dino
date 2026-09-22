@@ -132,10 +132,12 @@ export function parseDecideResponse(
   const action = maneuver.choice as Maneuver;
   let jump_profile = profile.choice as JumpProfile;
   // Only allow short jump for a lone small cactus (same rule as reference).
+  // Prefer Jev's short choice when eligible — do not require high profile
+  // confidence, since that question is often weakly scored.
   const shortOk =
     state.obstacle.kind === "small_cactus" &&
     state.obstacle.group === "single";
-  if (action !== "jump" || !shortOk || profile.confidence < CONFIDENCE_THRESHOLD) {
+  if (action !== "jump" || !shortOk) {
     jump_profile = "full";
   }
 

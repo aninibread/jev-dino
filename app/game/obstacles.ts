@@ -156,12 +156,10 @@ const MAX_OBSTACLE_DUPLICATION = 2;
 
 export class ObstacleManager {
   obstacles: Obstacle[] = [];
-  followingObstacleCreated = false;
   private history: string[] = [];
 
   reset() {
     this.obstacles = [];
-    this.followingObstacleCreated = false;
     this.history = [];
   }
 
@@ -173,25 +171,21 @@ export class ObstacleManager {
 
     const lead = askLeadPixels(speed);
     const spawnHorizon = DEFAULT_WIDTH + lead;
-    const offscreen = this.obstacles.filter((o) => o.xPos >= DEFAULT_WIDTH)
-      .length;
 
-    if (this.obstacles.length > 0) {
+    if (this.obstacles.length === 0) {
+      this.addNewObstacle(speed, elapsedMs, spawnHorizon);
+    }
+
+    // Eagerly keep a follow-on in the pipeline so Jev can see next_obstacle
+    // when asking about the current one (not only once it crosses spawnHorizon).
+    while (this.obstacles.length > 0) {
+      const offscreen = this.obstacles.filter(
+        (o) => o.xPos >= DEFAULT_WIDTH,
+      ).length;
+      if (offscreen >= JEV_MAX_OFFSCREEN) break;
       const last = this.obstacles[this.obstacles.length - 1]!;
       const nextX = last.xPos + last.width + last.gap;
-      // Cap off-screen queue so Jev decides stay serial-ish under AI latency.
-      if (
-        offscreen < JEV_MAX_OFFSCREEN &&
-        nextX < spawnHorizon &&
-        !this.followingObstacleCreated
-      ) {
-        this.addNewObstacle(speed, elapsedMs, nextX);
-        this.followingObstacleCreated = true;
-      } else if (nextX >= spawnHorizon || offscreen >= JEV_MAX_OFFSCREEN) {
-        this.followingObstacleCreated = false;
-      }
-    } else {
-      this.addNewObstacle(speed, elapsedMs, spawnHorizon);
+      this.addNewObstacle(speed, elapsedMs, nextX);
     }
   }
 

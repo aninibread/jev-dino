@@ -32,11 +32,16 @@ export const CLEAR_TIME_MS = 4000;
  */
 export const JEV_ASK_LEAD_SECONDS = 3.5;
 /** Max obstacles waiting off-screen (keeps the decide queue from stampeding AI). */
-export const JEV_MAX_OFFSCREEN = 2;
+export const JEV_MAX_OFFSCREEN = 3;
 /** Browser fetch budget for /api/jev-decide (must exceed server AI timeout). */
 export const JEV_CLIENT_TIMEOUT_MS = 8_000;
 /** Workers AI abort budget inside the decide handler. */
 export const JEV_SERVER_TIMEOUT_MS = 7_000;
+/**
+ * If the next obstacle is still unknown, wait to ask until this many seconds
+ * remain before the action proximity threshold — then ask with next=null.
+ */
+export const JEV_ASK_DEADLINE_SECONDS = 1.6;
 
 export const SPRITE_LDPI = {
   CACTUS_LARGE: { x: 332, y: 2 },

@@ -1,5 +1,6 @@
 import {
   BASE_SPEED,
+  JEV_ASK_DEADLINE_SECONDS,
   JEV_CLIENT_TIMEOUT_MS,
 } from "./constants";
 import {
@@ -105,6 +106,8 @@ type DecideBody = {
 export class JevController {
   private frameHook: number | null = null;
   private seen = new Set<string>();
+  /** Seen but not asked yet — wait for next_obstacle when possible. */
+  private awaitingAsk = new Set<string>();
   private plans = new Map<string, Plan>();
   private lastAction: "run" | "jump" | "duck" = "run";
   private lastDecision: DecideResponse | null = null;
@@ -167,6 +170,7 @@ export class JevController {
     this.stop();
     this.running = true;
     this.seen.clear();
+    this.awaitingAsk.clear();
     this.plans.clear();
     this.decideQueue = [];
     this.decideBusy = false;
@@ -201,6 +205,7 @@ export class JevController {
     for (const plan of this.plans.values()) plan.abort.abort();
     this.plans.clear();
     this.seen.clear();
+    this.awaitingAsk.clear();
     this.pressJump = 0;
     this.pressDuck = 0;
   }
@@ -240,6 +245,38 @@ export class JevController {
     for (const obstacle of snapshot.obstacles) {
       if (obstacle.remove || this.seen.has(obstacle.id)) continue;
       this.seen.add(obstacle.id);
+      this.awaitingAsk.add(obstacle.id);
+    }
+
+    for (const id of [...this.awaitingAsk]) {
+      const obstacle = snapshot.obstacles.find((o) => o.id === id);
+      if (!obstacle || obstacle.remove) {
+        this.awaitingAsk.delete(id);
+        continue;
+      }
+      if (this.plans.has(id)) {
+        this.awaitingAsk.delete(id);
+        continue;
+      }
+
+      const next = this.findNextObstacle(obstacle, snapshot);
+      const threshold = calculateActionProximityThreshold({
+        baseSpeed: BASE_SPEED,
+        currentSpeed: snapshot.speed,
+        dinosaurX: snapshot.dinosaurX,
+        obstacleWidth: obstacle.width,
+        action: "jump",
+        jumpProfile: "full",
+      });
+      const pxPerSec = Math.max(snapshot.speed, 0.1) * 60;
+      const secondsToAct = Math.max(0, (obstacle.xPos - threshold) / pxPerSec);
+      // Wait for a follow-up obstacle when we still have lead time, so jump
+      // profile can see tight chains. Ask anyway once the deadline hits.
+      if (!next && secondsToAct > JEV_ASK_DEADLINE_SECONDS) {
+        continue;
+      }
+
+      this.awaitingAsk.delete(id);
       this.queueDecision(obstacle, snapshot);
     }
   }
@@ -380,13 +417,13 @@ export class JevController {
       const effectiveJumpProfile: JumpProfile =
         decision.action === "jump" &&
         decision.jump_profile === "short" &&
-        decision.confidence >= CONFIDENCE_THRESHOLD &&
         shortOk
           ? "short"
           : "full";
 
       const enriched: DecideResponse & { effectiveJumpProfile: JumpProfile } = {
         ...decision,
+        jump_profile: effectiveJumpProfile,
         probabilities: decision.probabilities ?? {
           ...EMPTY_PROBABILITIES,
           [decision.action]: decision.confidence,
