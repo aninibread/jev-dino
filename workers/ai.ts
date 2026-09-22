@@ -1,7 +1,6 @@
 import {
   buildManeuverQuestions,
   buildManeuverState,
-  CONFIDENCE_THRESHOLD,
   EMPTY_PROBABILITIES,
   maneuverToPresses,
   type DecideResponse,
