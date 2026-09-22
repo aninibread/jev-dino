@@ -305,11 +305,6 @@ a:focus-visible {
   background: #0a7;
 }
 
-.jev-io-meta {
-  padding-top: 4px;
-  border-top: 1px solid var(--line);
-}
-
 .race-actions {
   display: grid;
   justify-items: center;

@@ -37,6 +37,8 @@ export function JevIoPanel({
   status: JevIoStatus;
   active: boolean;
 }) {
+  // Keep the last probabilities mounted so the right column does not flash away
+  // while the next ask is in flight.
   const probs = decision?.probabilities ?? EMPTY_PROBABILITIES;
   const chosen = decision?.action;
 
@@ -92,59 +94,32 @@ export function JevIoPanel({
 
         <div className="jev-io-col">
           <h3>Output</h3>
-          {decision && ask && decision.obstacle_id === ask.obstacle.id ? (
-            <>
-              <ul className="jev-probs">
-                {MANEUVERS.map((key) => {
-                  const value = probs[key] ?? 0;
-                  return (
-                    <li
-                      key={key}
-                      className={chosen === key ? "is-chosen" : undefined}
-                    >
-                      <div className="jev-prob-label">
-                        <span>{labelManeuver(key)}</span>
-                        <strong>{pct(value)}</strong>
-                      </div>
-                      <div
-                        className="jev-prob-track"
-                        role="presentation"
-                        aria-hidden="true"
-                      >
-                        <div
-                          className="jev-prob-fill"
-                          style={{ width: pct(value) }}
-                        />
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-              <dl className="jev-io-facts jev-io-meta">
-                <div>
-                  <dt>Chose</dt>
-                  <dd>
-                    {labelManeuver(decision.action)}
-                    {decision.action === "jump"
-                      ? ` · ${decision.jump_profile}`
-                      : ""}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Confidence</dt>
-                  <dd>{pct(decision.confidence)}</dd>
-                </div>
-                <div>
-                  <dt>Latency</dt>
-                  <dd>{Math.round(decision.durationMs)}ms</dd>
-                </div>
-              </dl>
-            </>
-          ) : ask && status === "thinking" ? (
-            <p className="jev-io-empty">Waiting on Workers AI...</p>
-          ) : (
-            <p className="jev-io-empty">No reply yet.</p>
-          )}
+          <ul className="jev-probs">
+            {MANEUVERS.map((key) => {
+              const value = probs[key] ?? 0;
+              return (
+                <li
+                  key={key}
+                  className={chosen === key ? "is-chosen" : undefined}
+                >
+                  <div className="jev-prob-label">
+                    <span>{labelManeuver(key)}</span>
+                    <strong>{pct(value)}</strong>
+                  </div>
+                  <div
+                    className="jev-prob-track"
+                    role="presentation"
+                    aria-hidden="true"
+                  >
+                    <div
+                      className="jev-prob-fill"
+                      style={{ width: pct(value) }}
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       </div>
     </section>
