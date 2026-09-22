@@ -1,11 +1,13 @@
 import {
+  buildJumpProfileQuestions,
   buildManeuverQuestions,
   buildManeuverState,
-  EMPTY_PROBABILITIES,
+  EMPTY_PROFILE_PROBABILITIES,
   maneuverToPresses,
   type DecideResponse,
   type DecideState,
   type JumpProfile,
+  type JumpProfileProbabilities,
   type Maneuver,
   type ManeuverProbabilities,
 } from "../app/lib/jev-contract";
@@ -17,6 +19,7 @@ export class ApiError extends Error {
     message: string,
   ) {
     super(message);
+    this.name = "ApiError";
   }
 }
 
@@ -54,13 +57,14 @@ function findAnswerBlock(
   return null;
 }
 
-function parseProbabilities(
+function parseDistribution(
   block: Record<string, unknown> | null,
   allowed: string[],
   chosen: string,
   confidence: number,
-): ManeuverProbabilities {
-  const probs = { ...EMPTY_PROBABILITIES };
+): Record<string, number> {
+  const probs: Record<string, number> = {};
+  for (const key of allowed) probs[key] = 0;
   const raw = block && object(block.probabilities) ? block.probabilities : null;
   let sum = 0;
   if (raw) {
@@ -68,20 +72,18 @@ function parseProbabilities(
       const value = raw[key];
       if (typeof value === "number" && Number.isFinite(value)) {
         const clamped = Math.min(1, Math.max(0, value));
-        probs[key as Maneuver] = clamped;
+        probs[key] = clamped;
         sum += clamped;
       }
     }
   }
-  // Fallback: put confidence on the chosen maneuver when Jev omits probs.
   if (sum < 0.01) {
-    for (const key of allowed) probs[key as Maneuver] = 0;
-    probs[chosen as Maneuver] = confidence;
+    for (const key of allowed) probs[key] = 0;
+    probs[chosen] = confidence;
     return probs;
   }
-  // Normalize so the three bars read as a distribution.
   for (const key of allowed) {
-    probs[key as Maneuver] = probs[key as Maneuver] / sum;
+    probs[key] = probs[key] / sum;
   }
   return probs;
 }
@@ -113,14 +115,50 @@ function parseChoice(
   return { choice, confidence, block };
 }
 
-export function parseDecideResponse(
+export function parseManeuverResponse(
   value: unknown,
   state: DecideState,
-): Omit<DecideResponse, "durationMs" | "source"> {
+): Omit<
+  DecideResponse,
+  "durationMs" | "source" | "jump_profile" | "profile_probabilities"
+> & {
+  jump_profile: JumpProfile;
+  profile_probabilities: JumpProfileProbabilities;
+} {
   const maneuver = parseChoice(value, "maneuver", MANEUVERS);
   if (!maneuver) {
     throw new ApiError(502, "Jev returned an unreadable maneuver.");
   }
+
+  const action = maneuver.choice as Maneuver;
+  const probabilities = parseDistribution(
+    maneuver.block,
+    MANEUVERS,
+    action,
+    maneuver.confidence,
+  ) as ManeuverProbabilities;
+  const presses = maneuverToPresses(action);
+  return {
+    action,
+    // Profile filled by the second call when action is jump.
+    jump_profile: "full",
+    confidence: maneuver.confidence,
+    probabilities,
+    profile_probabilities: { ...EMPTY_PROFILE_PROBABILITIES },
+    press_jump: presses.press_jump,
+    press_duck: presses.press_duck,
+    obstacle_id: state.obstacle.id,
+  };
+}
+
+export function parseJumpProfileResponse(
+  value: unknown,
+  state: DecideState,
+): {
+  jump_profile: JumpProfile;
+  profile_probabilities: JumpProfileProbabilities;
+  confidence: number;
+} {
   const profile =
     parseChoice(value, "jump_profile", PROFILES) ?? {
       choice: "full" as const,
@@ -128,37 +166,53 @@ export function parseDecideResponse(
       block: {},
     };
 
-  const action = maneuver.choice as Maneuver;
   let jump_profile = profile.choice as JumpProfile;
-  // Only allow short jump for a lone small cactus (same rule as reference).
-  // Prefer Jev's short choice when eligible — do not require high profile
-  // confidence, since that question is often weakly scored.
   const shortOk =
     state.obstacle.kind === "small_cactus" &&
     state.obstacle.group === "single";
-  if (action !== "jump" || !shortOk) {
+  if (!shortOk) {
     jump_profile = "full";
   }
 
-  const probabilities = parseProbabilities(
-    maneuver.block,
-    MANEUVERS,
-    action,
-    maneuver.confidence,
-  );
-  const presses = maneuverToPresses(action);
-  return {
-    action,
+  const profile_probabilities = parseDistribution(
+    profile.block,
+    PROFILES,
     jump_profile,
-    confidence: maneuver.confidence,
-    probabilities,
-    press_jump: presses.press_jump,
-    press_duck: presses.press_duck,
-    obstacle_id: state.obstacle.id,
+    profile.confidence,
+  ) as JumpProfileProbabilities;
+
+  // If short was illegal, fold mass onto full for the bars.
+  if (!shortOk) {
+    return {
+      jump_profile: "full",
+      profile_probabilities: {
+        short: 0,
+        full: Math.max(
+          profile_probabilities.full,
+          profile_probabilities.short,
+          profile.confidence,
+        ),
+      },
+      confidence: profile.confidence,
+    };
+  }
+
+  return {
+    jump_profile,
+    profile_probabilities,
+    confidence: profile.confidence,
   };
 }
 
-export async function decideWithJev(
+/** @deprecated Prefer parseManeuverResponse + parseJumpProfileResponse. */
+export function parseDecideResponse(
+  value: unknown,
+  state: DecideState,
+): Omit<DecideResponse, "durationMs" | "source"> {
+  return parseManeuverResponse(value, state);
+}
+
+export async function decideManeuverWithJev(
   ai: Ai,
   state: DecideState,
   signal?: AbortSignal,
@@ -178,10 +232,53 @@ export async function decideWithJev(
     },
   );
   return {
-    ...parseDecideResponse(result, state),
+    ...parseManeuverResponse(result, state),
     durationMs: performance.now() - start,
     source: "jev",
   };
+}
+
+export async function decideJumpProfileWithJev(
+  ai: Ai,
+  state: DecideState,
+  signal?: AbortSignal,
+): Promise<{
+  jump_profile: JumpProfile;
+  profile_probabilities: JumpProfileProbabilities;
+  confidence: number;
+  durationMs: number;
+  source: "jev" | "none";
+  obstacle_id: string;
+}> {
+  const start = performance.now();
+  const result = await ai.run(
+    "typesafe/jev",
+    {
+      state: buildManeuverState(state),
+      questions: buildJumpProfileQuestions(),
+    },
+    {
+      signal: AbortSignal.any([
+        AbortSignal.timeout(JEV_SERVER_TIMEOUT_MS),
+        ...(signal ? [signal] : []),
+      ]),
+    },
+  );
+  return {
+    ...parseJumpProfileResponse(result, state),
+    durationMs: performance.now() - start,
+    source: "jev",
+    obstacle_id: state.obstacle.id,
+  };
+}
+
+/** Maneuver-only decide (first call). */
+export async function decideWithJev(
+  ai: Ai,
+  state: DecideState,
+  signal?: AbortSignal,
+): Promise<DecideResponse> {
+  return decideManeuverWithJev(ai, state, signal);
 }
 
 export function publicError(error: unknown): {

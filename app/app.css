@@ -285,6 +285,12 @@ a:focus-visible {
   gap: 8px;
 }
 
+.jev-probs-profile {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
 .jev-prob-label {
   display: flex;
   justify-content: space-between;

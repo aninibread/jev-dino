@@ -45,11 +45,16 @@ export type DecideState = {
 /** Soft scores over the three maneuvers (from Jev choice probabilities). */
 export type ManeuverProbabilities = Record<Maneuver, number>;
 
+/** Soft scores over short vs full (from the second Jev call when action is jump). */
+export type JumpProfileProbabilities = Record<JumpProfile, number>;
+
 export type DecideResponse = {
   action: Maneuver;
   jump_profile: JumpProfile;
   confidence: number;
   probabilities: ManeuverProbabilities;
+  /** Present after the jump_profile call; zeros when the maneuver is not jump. */
+  profile_probabilities: JumpProfileProbabilities;
   /** Derived key-hold view for HUD / logging. */
   press_jump: number;
   press_duck: number;
@@ -78,6 +83,11 @@ export const EMPTY_PROBABILITIES: ManeuverProbabilities = {
   jump: 0,
   duck: 0,
   keep_running: 0,
+};
+
+export const EMPTY_PROFILE_PROBABILITIES: JumpProfileProbabilities = {
+  short: 0,
+  full: 0,
 };
 
 /** Gaps at or below this (seconds) count as a tight follow-up for short jumps. */
@@ -197,12 +207,14 @@ export function buildManeuverState(state: DecideState) {
     timing_policy: [
       "The current motion is transient. Browser code will finish it and",
       "execute the chosen maneuver at the safe proximity for the current speed.",
-      "Choose only the maneuver for the target obstacle. next_obstacle is",
-      "context for jump height only, not a second action to plan.",
+      "Choose only the maneuver for the target obstacle. Jump height is asked",
+      "in a follow-up call only if this call chooses jump. next_obstacle is",
+      "context for that follow-up, not a second action to plan here.",
     ].join(" "),
   };
 }
 
+/** First Jev call: maneuver only. */
 export function buildManeuverQuestions() {
   return {
     maneuver: {
@@ -214,7 +226,7 @@ export function buildManeuverQuestions() {
         "distant obstacle was first observed; do not assume that motion will",
         "still be active when the obstacle arrives.",
         "Choose only the maneuver type for the target. Browser code will handle",
-        "timing and any later obstacle separately.",
+        "timing, jump height, and any later obstacle separately.",
       ].join(" "),
       criteria: {
         jump: {
@@ -237,10 +249,16 @@ export function buildManeuverQuestions() {
         },
       },
     },
+  };
+}
+
+/** Second Jev call: jump profile only (after maneuver chose jump). */
+export function buildJumpProfileQuestions() {
+  return {
     jump_profile: {
       type: "choice",
       instructions: [
-        "Assume the safest maneuver is to jump the target obstacle.",
+        "The safest maneuver for the target obstacle is already jump.",
         "Choose the jump trajectory that best clears it and still leaves the",
         "dinosaur ready for whatever comes next.",
         "If next_obstacle.is_tight_follow_up is true and the next hazard also",
