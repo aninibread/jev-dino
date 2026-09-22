@@ -65,6 +65,11 @@ export type DecideResponse = {
   durationMs: number;
   source: "jev" | "none";
   obstacle_id: string;
+  /** Billable usage for this ask when source is jev. */
+  usage?: {
+    input_tokens: number;
+    cost_usd: number;
+  };
 };
 
 export type ObstacleAskView = ObstacleDecisionState & {
