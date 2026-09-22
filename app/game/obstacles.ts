@@ -2,6 +2,7 @@ import {
   DEFAULT_WIDTH,
   FPS,
   JEV_ASK_LEAD_SECONDS,
+  JEV_MAX_OFFSCREEN,
   OBSTACLE_TYPES,
   SPRITE_LDPI,
   type Box,
@@ -172,16 +173,21 @@ export class ObstacleManager {
 
     const lead = askLeadPixels(speed);
     const spawnHorizon = DEFAULT_WIDTH + lead;
+    const offscreen = this.obstacles.filter((o) => o.xPos >= DEFAULT_WIDTH)
+      .length;
 
     if (this.obstacles.length > 0) {
       const last = this.obstacles[this.obstacles.length - 1]!;
       const nextX = last.xPos + last.width + last.gap;
-      // Create the next obstacle while it is still far off-screen so Jev's
-      // ask starts ~JEV_ASK_LEAD_SECONDS before the visible approach.
-      if (nextX < spawnHorizon && !this.followingObstacleCreated) {
+      // Cap off-screen queue so Jev decides stay serial-ish under AI latency.
+      if (
+        offscreen < JEV_MAX_OFFSCREEN &&
+        nextX < spawnHorizon &&
+        !this.followingObstacleCreated
+      ) {
         this.addNewObstacle(speed, elapsedMs, nextX);
         this.followingObstacleCreated = true;
-      } else if (nextX >= spawnHorizon) {
+      } else if (nextX >= spawnHorizon || offscreen >= JEV_MAX_OFFSCREEN) {
         this.followingObstacleCreated = false;
       }
     } else {

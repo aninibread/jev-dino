@@ -1,5 +1,6 @@
 import {
   BASE_SPEED,
+  JEV_CLIENT_TIMEOUT_MS,
 } from "./constants";
 import {
   CONFIDENCE_THRESHOLD,
@@ -65,9 +66,15 @@ type Plan = {
   decision?: DecideResponse & { effectiveJumpProfile: JumpProfile };
 };
 
+function isAbortLike(error: unknown): boolean {
+  const name = (error as Error)?.name;
+  return name === "AbortError" || name === "TimeoutError";
+}
+
 /**
  * Per-obstacle planner (joshlarsen/jev-t-rex-runner style):
  * ask Jev once when an obstacle appears; code owns proximity timing + duck hold.
+ * Decides are serialized so Workers AI is not stampeded.
  */
 export class JevController {
   private frameHook: number | null = null;
@@ -81,6 +88,8 @@ export class JevController {
   private pressDuck = 0;
   private jumpProfile: JumpProfile = "full";
   private options: JevControllerOptions;
+  private decideQueue: Array<() => Promise<void>> = [];
+  private decideBusy = false;
   running = false;
 
   constructor(options: JevControllerOptions) {
@@ -125,6 +134,8 @@ export class JevController {
     this.running = true;
     this.seen.clear();
     this.plans.clear();
+    this.decideQueue = [];
+    this.decideBusy = false;
     this.lastAction = "run";
     this.lastDecision = null;
     this.lastAsk = null;
@@ -133,7 +144,7 @@ export class JevController {
     this.pressDuck = 0;
     this.jumpProfile = "full";
     console.log(
-      "%c[Jev]%c per-obstacle maneuvers — code owns timing (ref: jev-t-rex-runner)",
+      "%c[Jev]%c per-obstacle maneuvers; serial decides; code owns timing",
       "color:#0a7;font-weight:700",
       "color:inherit",
     );
@@ -150,11 +161,33 @@ export class JevController {
     this.running = false;
     if (this.frameHook) cancelAnimationFrame(this.frameHook);
     this.frameHook = null;
+    this.decideQueue = [];
+    this.decideBusy = false;
     for (const plan of this.plans.values()) plan.abort.abort();
     this.plans.clear();
     this.seen.clear();
     this.pressJump = 0;
     this.pressDuck = 0;
+  }
+
+  private enqueueDecide(task: () => Promise<void>) {
+    this.decideQueue.push(task);
+    void this.pumpDecideQueue();
+  }
+
+  private async pumpDecideQueue() {
+    if (this.decideBusy) return;
+    this.decideBusy = true;
+    while (this.running && this.decideQueue.length > 0) {
+      const task = this.decideQueue.shift();
+      if (!task) break;
+      try {
+        await task();
+      } catch {
+        /* Individual tasks handle their own failures. */
+      }
+    }
+    this.decideBusy = false;
   }
 
   private onFrame() {
@@ -172,11 +205,11 @@ export class JevController {
     for (const obstacle of snapshot.obstacles) {
       if (obstacle.remove || this.seen.has(obstacle.id)) continue;
       this.seen.add(obstacle.id);
-      void this.requestDecision(obstacle, snapshot);
+      this.queueDecision(obstacle, snapshot);
     }
   }
 
-  private async requestDecision(obstacle: Obstacle, snapshot: JevSnapshot) {
+  private queueDecision(obstacle: Obstacle, snapshot: JevSnapshot) {
     const abort = new AbortController();
     const type = obstacle.typeConfig.kind;
     const alt = type === "bird" ? birdAltitude(obstacle.yPos) : undefined;
@@ -222,19 +255,34 @@ export class JevController {
       },
     };
 
-    logJevAsk(body);
+    this.enqueueDecide(async () => {
+      if (!this.running || this.plans.get(obstacle.id) !== plan) return;
+      if (plan.status !== "pending") return;
+      logJevAsk(body);
+      await this.fetchDecision(plan, ask, body);
+    });
+  }
 
+  private async fetchDecision(
+    plan: Plan,
+    ask: JevAskView,
+    body: DecideBody,
+    attempt = 0,
+  ): Promise<void> {
     try {
       const response = await fetch("/api/jev-decide", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-        signal: AbortSignal.any([abort.signal, AbortSignal.timeout(2800)]),
+        signal: AbortSignal.any([
+          plan.abort.signal,
+          AbortSignal.timeout(JEV_CLIENT_TIMEOUT_MS),
+        ]),
       });
       if (!response.ok) throw new Error(`decide failed (${response.status})`);
       const decision = (await response.json()) as DecideResponse;
       if (!this.running) return;
-      if (this.plans.get(obstacle.id) !== plan || plan.status !== "pending") {
+      if (this.plans.get(plan.obstacleId) !== plan || plan.status !== "pending") {
         return;
       }
 
@@ -281,8 +329,26 @@ export class JevController {
       plan.status = "ready";
       this.emitIo("ready", ask, enriched);
     } catch (error) {
-      if ((error as Error)?.name === "AbortError") return;
-      if (this.plans.get(obstacle.id) !== plan) return;
+      if (!this.running) return;
+      if (this.plans.get(plan.obstacleId) !== plan) return;
+      if (plan.status !== "pending") return;
+
+      // Plan was cancelled because the obstacle arrived (late) or race ended.
+      if (plan.abort.signal.aborted) return;
+
+      const canRetry = attempt < 1;
+      if (canRetry) {
+        console.log(
+          "%c[Jev]%c retrying %s (%s)",
+          "color:#c60;font-weight:600",
+          "color:inherit",
+          plan.obstacleId,
+          error instanceof Error ? error.message : "request failed",
+        );
+        await this.fetchDecision(plan, ask, body, attempt + 1);
+        return;
+      }
+
       plan.status = "error";
       this.emitIo("error", ask, this.lastDecision);
       console.log(
@@ -322,7 +388,7 @@ export class JevController {
       });
 
       if (obstacle.xPos > threshold) {
-        // Still too far — wait. Keep duck held if already ducking this one.
+        // Still too far. Keep duck held if already ducking this one.
         if (plan.status === "ducking") {
           wantDuck = true;
         }
@@ -330,12 +396,12 @@ export class JevController {
       }
 
       if (plan.status === "pending") {
-        // Decision too late — abort and skip (no thrash fallback).
+        // Decision too late: abort and skip (no thrash fallback).
         plan.status = "late";
         plan.abort.abort();
         this.emitIo("late", plan.ask, plan.decision ?? null);
         console.log(
-          "%c[Jev]%c late — skipped %s",
+          "%c[Jev]%c late, skipped %s",
           "color:#c60;font-weight:600",
           "color:inherit",
           id,
@@ -374,7 +440,7 @@ export class JevController {
         plan.status = "ducking";
         logJevAct(this.lastAction, "duck", plan.decision!, null);
       } else {
-        // keep_running — clear the plan; code does nothing.
+        // keep_running: clear the plan; code does nothing.
         plan.status = "executed";
       }
     }

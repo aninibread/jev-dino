@@ -10,6 +10,7 @@ import {
   type Maneuver,
   type ManeuverProbabilities,
 } from "../app/lib/jev-contract";
+import { JEV_SERVER_TIMEOUT_MS } from "../app/game/constants";
 
 export class ApiError extends Error {
   constructor(
@@ -170,7 +171,7 @@ export async function decideWithJev(
     },
     {
       signal: AbortSignal.any([
-        AbortSignal.timeout(2500),
+        AbortSignal.timeout(JEV_SERVER_TIMEOUT_MS),
         ...(signal ? [signal] : []),
       ]),
     },

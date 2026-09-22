@@ -30,7 +30,13 @@ export const CLEAR_TIME_MS = 4000;
  * obstacle reaches the visible canvas. Jev is asked as soon as the obstacle is
  * created, so this is the main lever for Workers AI latency.
  */
-export const JEV_ASK_LEAD_SECONDS = 2.25;
+export const JEV_ASK_LEAD_SECONDS = 3.5;
+/** Max obstacles waiting off-screen (keeps the decide queue from stampeding AI). */
+export const JEV_MAX_OFFSCREEN = 2;
+/** Browser fetch budget for /api/jev-decide (must exceed server AI timeout). */
+export const JEV_CLIENT_TIMEOUT_MS = 8_000;
+/** Workers AI abort budget inside the decide handler. */
+export const JEV_SERVER_TIMEOUT_MS = 7_000;
 
 export const SPRITE_LDPI = {
   CACTUS_LARGE: { x: 332, y: 2 },
