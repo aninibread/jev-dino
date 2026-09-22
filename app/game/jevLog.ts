@@ -1,8 +1,10 @@
-import type {
-  DecideResponse,
-  DecideState,
-  JevAction,
-  UpcomingObstacle,
+import {
+  ATOMIC_KEYS,
+  type AtomicAnswers,
+  type DecideResponse,
+  type DecideState,
+  type JevAction,
+  type UpcomingObstacle,
 } from "../lib/jev-contract";
 
 function pct(n: number): string {
@@ -33,6 +35,21 @@ function fmtMemory(state: DecideState): string {
   return `act=${c.previous_action}→${c.current_action} keys:j=${c.jump_key_held ? "1" : "0"}/d=${c.duck_key_held ? "1" : "0"} lastBelief j=${pct(c.last_press_jump)} d=${pct(c.last_press_duck)}`;
 }
 
+function fmtAtomic(atomic: AtomicAnswers): string {
+  const hot = ATOMIC_KEYS.filter((key) => atomic[key] >= 0.35);
+  if (!hot.length) return "atomic: (all low)";
+  return hot.map((key) => `${key}=${pct(atomic[key])}`).join(" ");
+}
+
+function fmtConstraints(state: DecideState): string {
+  const c = state.constraints;
+  const parts: string[] = [];
+  if (!c.can_jump_this_frame) parts.push("no-jump");
+  if (c.mid_air_duck_means_speed_drop) parts.push("air-duck=slam");
+  if (state.gap_px !== null) parts.push(`gap=${state.gap_px}px`);
+  return parts.length ? parts.join(" ") : "constraints: ok";
+}
+
 export function formatJevAsk(state: DecideState): string {
   const next = state.visible[0];
   return [
@@ -40,6 +57,7 @@ export function formatJevAsk(state: DecideState): string {
     `spd=${state.speed.toFixed(1)}`,
     fmtDino(state),
     fmtMemory(state),
+    fmtConstraints(state),
     next ? `nearest: ${fmtObstacle(next)}` : "nearest: none",
     `visible: ${fmtWindow(state.visible)}`,
   ].join(" | ");
@@ -54,6 +72,7 @@ export function formatJevReply(
     decision.action.toUpperCase(),
     `jumpKey=${pct(decision.press_jump)}`,
     `duckKey=${pct(decision.press_duck)}`,
+    fmtAtomic(decision.atomic),
     `${Math.round(decision.durationMs)}ms`,
     decision.source,
     next ? `vs ${fmtObstacle(next)}` : "clear",

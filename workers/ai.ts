@@ -1,5 +1,11 @@
 import {
+  ATOMIC_KEYS,
+  buildSystemOneQuestions,
+  buildSystemOneState,
+  composeKeyHolds,
+  emptyAtomic,
   pickAction,
+  type AtomicAnswers,
   type DecideResponse,
   type DecideState,
 } from "../app/lib/jev-contract";
@@ -44,32 +50,56 @@ function findNoul(value: unknown, key: string): number | null {
   return null;
 }
 
+function parseAtomicAnswers(value: unknown): AtomicAnswers {
+  const atomic = emptyAtomic();
+  for (const key of ATOMIC_KEYS) {
+    const noul = findNoul(value, key);
+    if (noul !== null) atomic[key] = noul;
+  }
+  return atomic;
+}
+
 export function parseDecideResponse(
   value: unknown,
-  airborne: boolean,
+  state: DecideState,
 ): Omit<DecideResponse, "durationMs" | "source"> {
-  const press_jump =
-    findNoul(value, "press_jump") ?? findNoul(value, "jump_now");
-  const press_duck =
-    findNoul(value, "press_duck") ?? findNoul(value, "duck_now");
-  if (press_jump === null || press_duck === null) {
-    throw new ApiError(502, "Jev returned an unreadable answer.");
+  const atomic = parseAtomicAnswers(value);
+  const hasAtomic = ATOMIC_KEYS.some((key) => findNoul(value, key) !== null);
+
+  let press_jump: number;
+  let press_duck: number;
+
+  if (hasAtomic) {
+    ({ press_jump, press_duck } = composeKeyHolds(atomic, state));
+  } else {
+    // Legacy broad nouls (older deployments / proxies).
+    const legacyJump =
+      findNoul(value, "press_jump") ?? findNoul(value, "jump_now");
+    const legacyDuck =
+      findNoul(value, "press_duck") ?? findNoul(value, "duck_now");
+    if (legacyJump === null || legacyDuck === null) {
+      throw new ApiError(502, "Jev returned an unreadable answer.");
+    }
+    press_jump = legacyJump;
+    press_duck = legacyDuck;
   }
-  const action = pickAction(press_jump, press_duck, airborne);
+
+  const action = pickAction(press_jump, press_duck, state.dino.airborne);
   return {
     action,
     press_jump,
     press_duck,
+    atomic,
     confidence: Math.max(
       press_jump,
       press_duck,
-      1 - Math.max(press_jump, press_duck),
+      ...ATOMIC_KEYS.map((key) => atomic[key]),
     ),
   };
 }
 
 /**
- * Fair prompt: visible lane + memory of what you already did. Key holds out.
+ * System One: structured state + many narrow parallel nouls → compose in code.
  */
 export async function decideWithJev(
   ai: Ai,
@@ -77,87 +107,13 @@ export async function decideWithJev(
   signal?: AbortSignal,
 ): Promise<DecideResponse> {
   const start = performance.now();
-  const obstacles = state.visible.map((o, i) => ({
-    index: i + 1,
-    id: o.id,
-    type: o.type,
-    distance_px: Math.round(o.dx),
-    width_px: o.width,
-    height_px: o.height,
-    seconds_away: Number(o.seconds_away.toFixed(3)),
-    relation: o.relation,
-    already_jumped_for: o.already_jumped_for,
-    ...(o.bird_altitude ? { bird_altitude: o.bird_altitude } : {}),
-  }));
-
-  const gap_1_to_2_px =
-    state.visible.length >= 2
-      ? Math.round(state.visible[1]!.dx - state.visible[0]!.dx)
-      : null;
+  const hasSecond = state.visible.length >= 2;
 
   const result = await ai.run(
     "typesafe/jev",
     {
-      state: {
-        race_time_seconds: Number(state.t.toFixed(2)),
-        speed: Number(state.speed.toFixed(2)),
-        dino: {
-          on_ground: state.dino.grounded,
-          ducking: state.dino.ducking,
-          in_the_air: state.dino.airborne,
-          rising: state.dino.ascending,
-          how_high_in_jump: state.dino.jump_height_frac,
-          seconds_aloft: state.dino.seconds_aloft,
-          just_landed: state.dino.just_landed,
-          seconds_since_landed: state.dino.seconds_since_landed,
-        },
-        /** What you are doing / just did — like remembering your own inputs. */
-        memory: {
-          current_action: state.controls.current_action,
-          previous_action: state.controls.previous_action,
-          jump_key_currently_held: state.controls.jump_key_held,
-          duck_key_currently_held: state.controls.duck_key_held,
-          your_last_press_jump_belief: state.controls.last_press_jump,
-          your_last_press_duck_belief: state.controls.last_press_duck,
-          nearest_obstacle_id_when_this_jump_started:
-            state.controls.nearest_id_when_jump_started,
-          recent_action_changes: state.recent_actions,
-        },
-        visible_obstacles: obstacles,
-        gap_between_1st_and_2nd_px: gap_1_to_2_px,
-        how_to_read: {
-          already_jumped_for:
-            "true means you already left the ground for that obstacle — don't try to jump it again mid-air; look at the NEXT one.",
-          just_landed:
-            "true means feet just hit the ground — good moment to jump again if another cactus is close.",
-          cactus: "On the ground — jump over it.",
-          bird_high: "Overhead — usually run under (don't jump into it).",
-          bird_mid: "Head height — jump or duck.",
-          bird_low: "Near ground — jump.",
-          duck_in_air:
-            "Holding duck in the air = fast fall so you can jump sooner for a close second obstacle.",
-        },
-      },
-      questions: {
-        press_jump: {
-          type: "noul",
-          instructions:
-            "Hold the JUMP key? Use memory + visible_obstacles. If already_jumped_for is true on the nearest obstacle and you are still in the air, you cannot jump again — keep press_jump high only if you want to jump the NEXT obstacle the instant you land. If just_landed and a not-yet-jumped cactus is close, press_jump should be high. If previous_action was jump and you're still airborne over that same cactus, don't expect another jump yet. Think ahead for consecutive obstacles. Answers persist ~0.5–1s.",
-          criteria: {
-            true: "Hold jump.",
-            false: "Release jump.",
-          },
-        },
-        press_duck: {
-          type: "noul",
-          instructions:
-            "Hold the DUCK key? High for birds you must crouch under, or mid-air when already_jumped_for on #1 and a close #2 still needs a landing+jump (slam down). Use memory.current_action / previous_action and seconds_aloft. Low when a single normal jump is enough. Answers persist ~0.5–1s.",
-          criteria: {
-            true: "Hold duck / mid-air slam.",
-            false: "Release duck.",
-          },
-        },
-      },
+      state: buildSystemOneState(state),
+      questions: buildSystemOneQuestions(hasSecond),
     },
     {
       signal: AbortSignal.any([
@@ -168,7 +124,7 @@ export async function decideWithJev(
   );
   const durationMs = performance.now() - start;
   return {
-    ...parseDecideResponse(result, state.dino.airborne),
+    ...parseDecideResponse(result, state),
     durationMs,
     source: "jev",
   };

@@ -156,6 +156,22 @@ function parseState(raw: Record<string, unknown>): DecideState {
       };
     });
 
+  const constraintsRaw =
+    raw.constraints &&
+    typeof raw.constraints === "object" &&
+    !Array.isArray(raw.constraints)
+      ? (raw.constraints as Record<string, unknown>)
+      : {};
+
+  const gap_px =
+    typeof raw.gap_px === "number"
+      ? raw.gap_px
+      : parsed.length >= 2
+        ? Math.round(
+            parsed[1]!.dx - (parsed[0]!.dx + parsed[0]!.width),
+          )
+        : null;
+
   return {
     t: raw.t,
     speed: raw.speed,
@@ -195,6 +211,17 @@ function parseState(raw: Record<string, unknown>): DecideState {
     },
     recent_actions,
     visible: parsed,
+    constraints: {
+      can_jump_this_frame: Boolean(constraintsRaw.can_jump_this_frame),
+      can_duck_this_frame:
+        typeof constraintsRaw.can_duck_this_frame === "boolean"
+          ? constraintsRaw.can_duck_this_frame
+          : true,
+      mid_air_duck_means_speed_drop: Boolean(
+        constraintsRaw.mid_air_duck_means_speed_drop,
+      ),
+    },
+    gap_px,
   };
 }
 
@@ -223,6 +250,15 @@ export async function handleApi(
             action: "run" as const,
             press_jump: 0,
             press_duck: 0,
+            atomic: {
+              nearest_needs_jump: 0,
+              nearest_needs_duck: 0,
+              nearest_run_under: 0,
+              second_needs_jump: 0,
+              gap_is_tight: 0,
+              hold_jump_until_land: 0,
+              speed_drop_now: 0,
+            },
             confidence: 0,
             durationMs: 0,
             source: "none" as const,

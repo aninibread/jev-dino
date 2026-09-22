@@ -1,4 +1,5 @@
 import {
+  emptyAtomic,
   pickAction,
   type DecideResponse,
   type DecideState,
@@ -52,7 +53,7 @@ export class JevController {
     this.wasAirborne = false;
     this.lastDecision = null;
     console.log(
-      "%c[Jev]%c fair mode — visible lane in, key-hold beliefs out (no tactics)",
+      "%c[Jev]%c System One — atomic nouls in parallel, key holds composed in code",
       "color:#0a7;font-weight:700",
       "color:inherit",
     );
@@ -116,6 +117,7 @@ export class JevController {
       action,
       press_jump,
       press_duck,
+      atomic: this.lastDecision?.atomic ?? emptyAtomic(),
       confidence: Math.max(press_jump, press_duck),
       durationMs: this.lastDecision?.durationMs ?? 0,
       source,
@@ -185,6 +187,7 @@ export class JevController {
         ),
         press_jump: this.pressJump,
         press_duck: this.pressDuck,
+        atomic: body.atomic ?? emptyAtomic(),
         confidence: Math.max(this.pressJump, this.pressDuck),
         durationMs: body.durationMs ?? 0,
         source: "jev",

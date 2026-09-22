@@ -330,6 +330,13 @@ export class RaceGame {
         ...(o.type === "bird" ? { bird_altitude: birdAltitude(o.y) } : {}),
       }));
 
+    const gap_px =
+      visible.length >= 2
+        ? Math.round(
+            visible[1]!.dx - (visible[0]!.dx + visible[0]!.width),
+          )
+        : null;
+
     return {
       t: this.elapsedMs / 1000,
       speed: this.speed,
@@ -357,6 +364,12 @@ export class RaceGame {
       },
       recent_actions: this.recentActions.slice(-6),
       visible,
+      constraints: {
+        can_jump_this_frame: this.jev.grounded && !this.jev.jumping,
+        can_duck_this_frame: true,
+        mid_air_duck_means_speed_drop: airborne,
+      },
+      gap_px,
     };
   }
 
@@ -489,6 +502,24 @@ export class RaceGame {
       if (this.youDistance === this.jevDistance) this.finish("tie");
       else this.finish(this.youDistance > this.jevDistance ? "you" : "jev");
     }
+  }
+
+  private startLoop() {
+    this.stopLoop();
+    this.lastTime = performance.now();
+    const tick = (now: number) => {
+      const delta = Math.min(50, now - this.lastTime);
+      this.lastTime = now;
+      this.update(delta);
+      this.draw();
+      if (this.live) this.raf = requestAnimationFrame(tick);
+    };
+    this.raf = requestAnimationFrame(tick);
+  }
+
+  private stopLoop() {
+    if (this.raf) cancelAnimationFrame(this.raf);
+    this.raf = 0;
   }
 
   private finish(winner: Winner) {
