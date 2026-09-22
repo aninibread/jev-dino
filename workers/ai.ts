@@ -1,5 +1,6 @@
 import {
   buildJumpProfileQuestions,
+  buildJumpProfileState,
   buildManeuverQuestions,
   buildManeuverState,
   EMPTY_PROFILE_PROBABILITIES,
